@@ -108,7 +108,7 @@ export async function reorder(table: "projects" | "sections", ids: string[]) {
 export async function createSection(projectId: string, data?: SectionData) {
   return persist(() =>
     db.transaction("rw", db.sections, db.attachments, async () => {
-      const d = data ? (await cloneWithFiles([data], true))[0] : { title: "Untitled section", description: "", cards: [] };
+      const d = data ? (await cloneWithFiles([data], true))[0]! : { title: "Untitled section", description: "", cards: [] };
       const s: Section = { id: uid(), projectId, order: await nextOrder("sections", projectId), ...d };
       await db.sections.add(s);
       return s.id;
@@ -170,7 +170,7 @@ export async function saveCardTemplate(name: string, card: Card) {
 export async function saveSectionTemplate(name: string, s: SectionData) {
   return persist(() =>
     db.transaction("rw", db.templates, db.attachments, async () => {
-      const [section] = await cloneWithFiles([s], true);
+      const section = (await cloneWithFiles([s], true))[0]!;
       await db.templates.add({ id: uid(), level: "section", name, createdAt: now(), section });
     }),
   );

@@ -46,7 +46,7 @@ function Inner() {
   const [dark, setDark] = useTheme();
 
   const project = useLiveQuery(() => (projectId ? db.projects.get(projectId) : undefined), [projectId]);
-  const sections = useLiveQuery(() => (projectId ? db.sections.where("projectId").equals(projectId).sortBy("order") : Promise.resolve(null)), [projectId]);
+  const sections = useLiveQuery(async () => (projectId ? await db.sections.where("projectId").equals(projectId).sortBy("order") : null), [projectId]);
   const section = sections?.find((s) => s.id === sectionId) ?? sections?.[0];
 
   // If the selected project disappears (deleted/archived elsewhere), restore the empty state.

@@ -130,7 +130,8 @@ export function move<T>(list: T[], index: number, dir: -1 | 1): T[] {
   const j = index + dir;
   if (j < 0 || j >= list.length) return list;
   const next = [...list];
-  [next[index], next[j]] = [next[j], next[index]];
+  next[index] = list[j]!;
+  next[j] = list[index]!;
   return next;
 }
 

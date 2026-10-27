@@ -26,7 +26,7 @@ export function youtubeEmbed(url: string): string | null {
     else if (host === "youtube.com") {
       if (u.pathname === "/watch") id = u.searchParams.get("v");
       else if (u.pathname.startsWith("/embed/") || u.pathname.startsWith("/shorts/"))
-        id = u.pathname.split("/")[2];
+        id = u.pathname.split("/")[2] ?? null;
     }
     return id && /^[\w-]{6,20}$/.test(id) ? `https://www.youtube-nocookie.com/embed/${id}` : null;
   } catch {
@@ -34,20 +34,21 @@ export function youtubeEmbed(url: string): string | null {
   }
 }
 
-/** Walk Tiptap JSON, dropping link marks with unsafe hrefs and unknown raw HTML fields. */
+interface PMNode {
+  type?: unknown;
+  marks?: { type?: string; attrs?: { href?: string } }[];
+  content?: unknown[];
+  html?: unknown;
+}
+
+/** Walk Tiptap JSON, dropping link marks with unsafe hrefs and any raw HTML fields. */
 export function sanitizeDoc(node: unknown): unknown {
-  if (!node || typeof node !== "object") return node;
-  const n = { ...(node as Record<string, unknown>) };
+  if (!node || typeof node !== "object") return null;
+  const n: PMNode = { ...(node as PMNode) };
   if (typeof n.type !== "string") return null;
-  if (Array.isArray(n.marks)) {
-    n.marks = (n.marks as Record<string, unknown>[]).filter((m) => {
-      if (m?.type !== "link") return true;
-      const href = (m.attrs as { href?: string } | undefined)?.href ?? "";
-      return safeUrl(href) !== null;
-    });
-  }
+  if (Array.isArray(n.marks))
+    n.marks = n.marks.filter((m) => m?.type !== "link" || safeUrl(m.attrs?.href ?? "") !== null);
   if (Array.isArray(n.content)) n.content = n.content.map(sanitizeDoc).filter(Boolean);
-  if (typeof n.text === "string") n.text = n.text;
   delete n.html;
   return n;
 }

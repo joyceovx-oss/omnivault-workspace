@@ -9,21 +9,21 @@ const checklist = (): ChecklistCard => ({ id: "c1", type: "checklist", title: "L
 describe("templates and cloning", () => {
   it("resets checklist completion when inserting from a template", () => {
     const c = cloneCard(checklist(), { resetChecklist: true }) as ChecklistCard;
-    expect(c.items[0].done).toBe(false);
+    expect(c.items[0]!.done).toBe(false);
   });
   it("gives fresh ids and independent data", () => {
     const src = checklist();
     const c = cloneCard(src) as ChecklistCard;
     expect(c.id).not.toBe(src.id);
-    expect(c.items[0].id).not.toBe("i1");
-    c.items[0].text = "changed";
-    expect(src.items[0].text).toBe("a");
+    expect(c.items[0]!.id).not.toBe("i1");
+    c.items[0]!.text = "changed";
+    expect(src.items[0]!.text).toBe("a");
   });
   it("keeps the chosen option when options get new ids", () => {
     const r = newCard("radio") as ChoiceCard;
-    r.selected = r.options[1].id;
+    r.selected = r.options[1]!.id;
     const c = cloneCard(r) as ChoiceCard;
-    expect(c.selected).toBe(c.options[1].id);
+    expect(c.selected).toBe(c.options[1]!.id);
   });
   it("remaps attachments to copied records", () => {
     const img: Card = { id: "x", type: "image", title: "", attachmentId: "old", mode: "fit" };
@@ -35,17 +35,17 @@ describe("card stitch", () => {
   const cards = (): Card[] => [newCard("richtext"), checklist(), newCard("dropdown"), newCard("link")];
   it("preserves child types, content and order, and ungroup restores them", () => {
     const orig = cards();
-    const stitched = stitch(orig, [orig[3].id, orig[1].id]);
+    const stitched = stitch(orig, [orig[3]!.id, orig[1]!.id]);
     expect(stitched.map((c) => c.type)).toEqual(["richtext", "composite", "dropdown"]);
     const comp = stitched[1] as CompositeCard;
     expect(comp.children).toEqual([orig[1], orig[3]]);
-    expect(ungroup(stitched, comp.id).map((c) => c.id)).toEqual([orig[0].id, orig[1].id, orig[3].id, orig[2].id]);
+    expect(ungroup(stitched, comp.id).map((c) => c.id)).toEqual([0, 1, 3, 2].map((i) => orig[i]!.id));
   });
   it("rejects fewer than two cards and nested composites", () => {
     const orig = cards();
-    expect(() => stitch(orig, [orig[0].id])).toThrow();
-    const s = stitch(orig, [orig[0].id, orig[1].id]);
-    expect(() => stitch(s, [s[0].id, s[1].id])).toThrow(/nested/);
+    expect(() => stitch(orig, [orig[0]!.id])).toThrow();
+    const s = stitch(orig, [orig[0]!.id, orig[1]!.id]);
+    expect(() => stitch(s, [s[0]!.id, s[1]!.id])).toThrow(/nested/);
   });
 });
 
