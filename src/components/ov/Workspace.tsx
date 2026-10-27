@@ -7,6 +7,7 @@ import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { db } from "@/lib/ov/db";
 import { useSaveState } from "@/lib/ov/status";
+import { cn } from "@/lib/utils";
 import { exportBackup, importBackup } from "@/lib/ov/backup";
 import { DialogProvider } from "./dialogs";
 import { Sidebar } from "./Sidebar";
@@ -43,7 +44,10 @@ function Inner() {
   const [sectionId, setSectionId] = useState<string | null>(null);
   const [navOpen, setNavOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [collapsed, setCollapsed] = useState(() => typeof window !== "undefined" && localStorage.getItem("ov-sidebar") === "collapsed");
   const [dark, setDark] = useTheme();
+
+  useEffect(() => { localStorage.setItem("ov-sidebar", collapsed ? "collapsed" : "expanded"); }, [collapsed]);
 
   // One query so project and sections always resolve together for the same id.
   const data = useLiveQuery(async () => {
@@ -60,7 +64,9 @@ function Inner() {
   useEffect(() => { if (projectId && fresh && !data?.project) setProjectId(null); }, [data, fresh, projectId]);
 
   const selectProject = (id: string | null, sid: string | null = null) => { setProjectId(id); setSectionId(sid); setNavOpen(false); };
-  const sidebar = <Sidebar projectId={projectId} sectionId={section?.id ?? null} onSelectProject={selectProject} onSelectSection={(id) => { setSectionId(id); setNavOpen(false); }} />;
+  const navProps = { projectId, sectionId: section?.id ?? null, onSelectProject: selectProject, onSelectSection: (id: string) => { setSectionId(id); setNavOpen(false); } };
+  const sidebar = <Sidebar {...navProps} collapsed={collapsed} onToggleCollapsed={() => setCollapsed((v) => !v)} />;
+  const drawer = <Sidebar {...navProps} />;
 
   return (
     <div className="flex h-dvh flex-col bg-background text-foreground">
@@ -75,9 +81,9 @@ function Inner() {
         </div>
       </header>
       <div className="flex min-h-0 flex-1">
-        <aside className="hidden w-64 shrink-0 border-r border-sidebar-border bg-sidebar md:block">{sidebar}</aside>
+        <aside id="ov-sidebar" className={cn("hidden shrink-0 border-r border-sidebar-border bg-sidebar transition-[width] duration-200 md:block", collapsed ? "w-12" : "w-64")}>{sidebar}</aside>
         <Sheet open={navOpen} onOpenChange={setNavOpen}>
-          <SheetContent side="left" className="w-72 bg-sidebar p-0"><SheetTitle className="sr-only">Navigation</SheetTitle>{sidebar}</SheetContent>
+          <SheetContent side="left" className="w-72 bg-sidebar p-0"><SheetTitle className="sr-only">Navigation</SheetTitle>{drawer}</SheetContent>
         </Sheet>
         <main className="min-w-0 flex-1 overflow-y-auto">
           {projectId && section ? (

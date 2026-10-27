@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
-import { Archive, ArchiveRestore, ArrowDown, ArrowUp, Copy, FileStack, MoreHorizontal, Pencil, Plus, Save, Trash2 } from "lucide-react";
+import { Archive, ArchiveRestore, ArrowDown, ArrowUp, Copy, FileStack, MoreHorizontal, PanelLeftClose, PanelLeftOpen, Pencil, Plus, Save, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -25,9 +25,11 @@ interface Props {
   sectionId: string | null;
   onSelectProject: (id: string | null, sectionId?: string | null) => void;
   onSelectSection: (id: string) => void;
+  collapsed?: boolean;
+  onToggleCollapsed?: () => void;
 }
 
-export function Sidebar({ projectId, sectionId, onSelectProject, onSelectSection }: Props) {
+export function Sidebar({ projectId, sectionId, onSelectProject, onSelectSection, collapsed = false, onToggleCollapsed }: Props) {
   const { prompt, confirm } = useDialogs();
   const [showArchived, setShowArchived] = useState(false);
   const [newOpen, setNewOpen] = useState(false);
@@ -74,12 +76,41 @@ export function Sidebar({ projectId, sectionId, onSelectProject, onSelectSection
     </li>
   );
 
+  if (collapsed) {
+    return (
+      <nav aria-label="Projects and sections" className="flex h-full flex-col items-center gap-1 p-2">
+        <Button size="icon" variant="ghost" className="size-8 shrink-0" onClick={onToggleCollapsed} aria-label="Expand sidebar" aria-expanded={false} title="Expand sidebar"><PanelLeftOpen className="size-4" /></Button>
+        <Button size="icon" variant="ghost" className="size-8 shrink-0" onClick={() => setNewOpen(true)} aria-label="New project" title="New project"><Plus className="size-4" /></Button>
+        <div className="mt-1 flex min-h-0 flex-1 flex-col items-center gap-1 overflow-y-auto py-1">
+          {active.map((p) => (
+            <button
+              key={p.id}
+              onClick={() => onSelectProject(projectId === p.id ? null : p.id)}
+              aria-label={p.name}
+              aria-pressed={projectId === p.id}
+              title={p.name}
+              className={cn("grid size-8 shrink-0 place-items-center rounded-md text-xs font-semibold uppercase transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                projectId === p.id ? "bg-sidebar-accent text-sidebar-accent-foreground" : "text-muted-foreground hover:bg-sidebar-accent/60 hover:text-foreground")}
+            >{p.name.trim().charAt(0) || "?"}</button>
+          ))}
+        </div>
+        {archived.length > 0 && (
+          <Button size="icon" variant="ghost" className="size-8 shrink-0 text-muted-foreground" onClick={onToggleCollapsed} aria-label={`Expand sidebar to show archived (${archived.length})`} title={`Archived (${archived.length})`}><Archive className="size-4" /></Button>
+        )}
+        <NewProjectDialog open={newOpen} onOpenChange={setNewOpen} onCreated={(p, s) => onSelectProject(p, s)} />
+      </nav>
+    );
+  }
+
   return (
     <nav aria-label="Projects and sections" className="flex h-full flex-col gap-5 overflow-y-auto p-3">
       <div>
-        <div className="mb-1 flex items-center justify-between px-1">
+        <div className="mb-1 flex items-center justify-between gap-1 px-1">
           <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Projects</h2>
-          <Button size="icon" variant="ghost" className="size-7" onClick={() => setNewOpen(true)} aria-label="New project"><Plus className="size-4" /></Button>
+          <div className="flex items-center">
+            {onToggleCollapsed && <Button size="icon" variant="ghost" className="size-7" onClick={onToggleCollapsed} aria-label="Collapse sidebar" aria-expanded title="Collapse sidebar"><PanelLeftClose className="size-4" /></Button>}
+            <Button size="icon" variant="ghost" className="size-7" onClick={() => setNewOpen(true)} aria-label="New project"><Plus className="size-4" /></Button>
+          </div>
         </div>
         {active.length === 0 && <p className="px-2 py-1 text-sm text-muted-foreground">No projects yet.</p>}
         <ul className="space-y-0.5">{active.map((p, i) => projectRow(p, active, i))}</ul>
