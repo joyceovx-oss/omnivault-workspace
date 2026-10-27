@@ -81,7 +81,31 @@ function Inner() {
         </Sheet>
         <main className="min-w-0 flex-1 overflow-y-auto">
           {projectId && section ? (
-            <SectionView key={section.id} section={section} />
+            <>
+              <div className="mx-auto w-full max-w-3xl px-4 pt-5 sm:px-8">
+                <p className="truncate text-sm font-medium text-muted-foreground">{project?.name}</p>
+                <nav aria-label="Project sections" className="mt-2 border-b border-border">
+                  <div role="tablist" className="-mb-px flex gap-1 overflow-x-auto [scrollbar-width:none]">
+                    {sections!.map((s) => {
+                      const active = s.id === section.id;
+                      return (
+                        <button
+                          key={s.id}
+                          role="tab"
+                          aria-selected={active}
+                          ref={active ? (el) => el?.scrollIntoView({ block: "nearest", inline: "nearest" }) : undefined}
+                          onClick={() => setSectionId(s.id)}
+                          className={`max-w-48 shrink-0 truncate border-b-2 px-3 py-2 text-sm transition-colors focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${active ? "border-primary font-medium text-foreground" : "border-transparent text-muted-foreground hover:text-foreground"}`}
+                        >
+                          {s.title || "Untitled"}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </nav>
+              </div>
+              <SectionView key={section.id} section={section} />
+            </>
           ) : projectId && sections === undefined ? null : (
             <div className="flex h-full flex-col items-center justify-center px-6 text-center">
               <FolderOpen className="mb-4 size-10 text-muted-foreground/60" />
