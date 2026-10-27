@@ -45,12 +45,19 @@ function Inner() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [dark, setDark] = useTheme();
 
-  const project = useLiveQuery(() => (projectId ? db.projects.get(projectId) : undefined), [projectId]);
-  const sections = useLiveQuery(async () => (projectId ? await db.sections.where("projectId").equals(projectId).sortBy("order") : null), [projectId]);
+  // One query so project and sections always resolve together for the same id.
+  const data = useLiveQuery(async () => {
+    if (!projectId) return { id: null, project: undefined, sections: null };
+    const [project, sections] = await Promise.all([db.projects.get(projectId), db.sections.where("projectId").equals(projectId).sortBy("order")]);
+    return { id: projectId, project, sections };
+  }, [projectId]);
+  const fresh = data?.id === projectId;
+  const project = fresh ? data?.project : undefined;
+  const sections = fresh ? data?.sections : undefined;
   const section = sections?.find((s) => s.id === sectionId) ?? sections?.[0];
 
-  // If the selected project disappears (deleted/archived elsewhere), restore the empty state.
-  useEffect(() => { if (projectId && project === undefined && sections != null) setProjectId(null); }, [project, sections, projectId]);
+  // If the selected project disappears (deleted elsewhere), restore the empty state.
+  useEffect(() => { if (projectId && fresh && !data?.project) setProjectId(null); }, [data, fresh, projectId]);
 
   const selectProject = (id: string | null, sid: string | null = null) => { setProjectId(id); setSectionId(sid); setNavOpen(false); };
   const sidebar = <Sidebar projectId={projectId} sectionId={section?.id ?? null} onSelectProject={selectProject} onSelectSection={(id) => { setSectionId(id); setNavOpen(false); }} />;
