@@ -52,7 +52,7 @@ export function Sidebar({ projectId, sectionId, onSelectProject, onSelectSection
           {p.archived ? <><ArchiveRestore />Restore</> : <><Archive />Archive</>}
         </DropdownMenuItem>
         <DropdownMenuSeparator />
-        <DropdownMenuItem variant="destructive" onSelect={async () => {
+        <DropdownMenuItem className="text-destructive focus:text-destructive" onSelect={async () => {
           if (await confirm({ title: "Delete project?", body: `"${p.name}" and all its sections and cards will be permanently deleted.`, destructive: true, confirm: "Delete project" })) {
             if (projectId === p.id) onSelectProject(null);
             deleteProject(p.id).catch(err);
@@ -129,7 +129,7 @@ export function Sidebar({ projectId, sectionId, onSelectProject, onSelectSection
                     <DropdownMenuItem onSelect={() => duplicateSection(s.id).then(onSelectSection).catch(err)}><Copy />Duplicate</DropdownMenuItem>
                     <DropdownMenuItem onSelect={async () => { const n = await prompt({ title: "Save section template", label: "Template name", initial: s.title }); if (n) saveSectionTemplate(n, s).then(() => toast.success("Section template saved")).catch(err); }}><Save />Save as template</DropdownMenuItem>
                     <DropdownMenuSeparator />
-                    <DropdownMenuItem variant="destructive" disabled={sections.length === 1} onSelect={async () => {
+                    <DropdownMenuItem className="text-destructive focus:text-destructive" disabled={sections.length === 1} onSelect={async () => {
                       if (await confirm({ title: "Delete section?", body: `"${s.title}" and its cards will be permanently deleted.`, destructive: true, confirm: "Delete section" })) {
                         const next = sections.find((x) => x.id !== s.id);
                         await deleteSection(s.id).catch(err);

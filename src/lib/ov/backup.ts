@@ -47,7 +47,7 @@ export async function exportBackup(): Promise<Blob> {
 }
 
 function scrubTemplate(t: Template): Template {
-  if (t.level === "card") return { ...t, card: scrubCards([t.card])[0] };
+  if (t.level === "card") return { ...t, card: scrubCards([t.card])[0]! };
   if (t.level === "section") return { ...t, section: { ...t.section, cards: scrubCards(t.section.cards) } };
   return { ...t, sections: t.sections.map((s) => ({ ...s, cards: scrubCards(s.cards) })) };
 }
@@ -96,16 +96,18 @@ export async function importBackup(file: Blob): Promise<number> {
     for (const b of blobs) await db.attachments.add({ ...b, createdAt: Date.now() });
     const pMap: Record<string, string> = {};
     for (const [i, p] of m.projects.entries()) {
-      pMap[p.id] = uid();
-      await db.projects.add({ ...p, id: pMap[p.id], order: base + i });
+      const npid = uid();
+      pMap[p.id] = npid;
+      await db.projects.add({ ...p, id: npid, order: base + i });
     }
     for (const s of m.sections) {
-      if (!pMap[s.projectId]) continue;
-      await db.sections.add({ ...s, id: uid(), projectId: pMap[s.projectId], cards: fix(s.cards) });
+      const pid = pMap[s.projectId];
+      if (!pid) continue;
+      await db.sections.add({ ...s, id: uid(), projectId: pid, cards: fix(s.cards) });
     }
     for (const t of m.templates) {
       const id = uid();
-      if (t.level === "card") await db.templates.add({ ...t, id, card: fix([t.card])[0] });
+      if (t.level === "card") await db.templates.add({ ...t, id, card: fix([t.card])[0]! });
       else if (t.level === "section") await db.templates.add({ ...t, id, section: { ...t.section, cards: fix(t.section.cards) } });
       else await db.templates.add({ ...t, id, sections: t.sections.map((s) => ({ ...s, cards: fix(s.cards) })) });
     }

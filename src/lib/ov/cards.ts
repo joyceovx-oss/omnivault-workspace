@@ -83,7 +83,7 @@ function cloneLeaf(c: LeafCard, o: CloneOpts): LeafCard {
     case "image":
     case "file":
       if (base.attachmentId && o.attachmentMap?.[base.attachmentId])
-        base.attachmentId = o.attachmentMap[base.attachmentId];
+        base.attachmentId = o.attachmentMap[base.attachmentId]!;
       break;
     case "vaultref":
       base.collection = base.collection || "Default";

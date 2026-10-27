@@ -64,7 +64,7 @@ export function createProject(name: string, category: Category, sections?: Secti
         ids.push(id);
         await db.sections.add({ id, projectId: p.id, order: i, ...s });
       }
-      return { projectId: p.id, sectionId: ids[0] };
+      return { projectId: p.id, sectionId: ids[0]! };
     }),
   );
 }

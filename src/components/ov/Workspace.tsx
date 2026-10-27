@@ -46,11 +46,11 @@ function Inner() {
   const [dark, setDark] = useTheme();
 
   const project = useLiveQuery(() => (projectId ? db.projects.get(projectId) : undefined), [projectId]);
-  const sections = useLiveQuery(() => (projectId ? db.sections.where("projectId").equals(projectId).sortBy("order") : undefined), [projectId]);
+  const sections = useLiveQuery(() => (projectId ? db.sections.where("projectId").equals(projectId).sortBy("order") : Promise.resolve(null)), [projectId]);
   const section = sections?.find((s) => s.id === sectionId) ?? sections?.[0];
 
   // If the selected project disappears (deleted/archived elsewhere), restore the empty state.
-  useEffect(() => { if (projectId && project === undefined && sections !== undefined) setProjectId(null); }, [project, sections, projectId]);
+  useEffect(() => { if (projectId && project === undefined && sections != null) setProjectId(null); }, [project, sections, projectId]);
 
   const selectProject = (id: string | null, sid: string | null = null) => { setProjectId(id); setSectionId(sid); setNavOpen(false); };
   const sidebar = <Sidebar projectId={projectId} sectionId={section?.id ?? null} onSelectProject={selectProject} onSelectSection={(id) => { setSectionId(id); setNavOpen(false); }} />;

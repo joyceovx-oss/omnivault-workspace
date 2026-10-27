@@ -132,8 +132,8 @@ export function ImageBody({ card, onChange }: P<ImageCard>) {
   const [open, setOpen] = useState(false);
   useEffect(() => setBroken(false), [url]);
   const upload = async (f: File) => {
-    if (!IMAGE_TYPES.includes(f.type)) return toast.error("Use a PNG, JPEG, WebP or GIF image.");
-    if (f.size > MAX_IMAGE) return toast.error("Images must be 20 MB or smaller.");
+    if (!IMAGE_TYPES.includes(f.type)) return void toast.error("Use a PNG, JPEG, WebP or GIF image.");
+    if (f.size > MAX_IMAGE) return void toast.error("Images must be 20 MB or smaller.");
     try { onChange({ ...card, attachmentId: await addAttachment(f, f.name) }); } catch (e) { toast.error((e as Error).message); }
   };
   return (
@@ -179,7 +179,7 @@ export function FileBody({ card, onChange }: P<FileCard>) {
     const pdfjs = await import("pdfjs-dist");
     const worker = (await import("pdfjs-dist/build/pdf.worker.min.mjs?url")).default;
     pdfjs.GlobalWorkerOptions.workerSrc = worker;
-    return pdfjs.getDocument({ data: new Uint8Array(await att!.blob.arrayBuffer()), isEvalSupported: false }).promise;
+    return pdfjs.getDocument({ data: new Uint8Array(await att!.blob.arrayBuffer()) }).promise;
   }
   async function extract() {
     setBusy(true);
@@ -251,7 +251,7 @@ export function LinkBody({ card, editing, onChange }: P<LinkCard>) {
   const commit = () => {
     if (!draft.trim()) return onChange({ ...card, url: "" });
     const u = safeUrl(draft);
-    if (!u) return toast.error("Enter a valid http(s) or mailto link.");
+    if (!u) return void toast.error("Enter a valid http(s) or mailto link.");
     onChange({ ...card, url: u });
   };
   return (

@@ -69,7 +69,7 @@ export function CardView({ card, index, count, selecting, selected, onSelect, ac
             <DropdownMenuItem onSelect={actions.onSaveTemplate}><Save />Save as template</DropdownMenuItem>
             {card.type === "composite" && <DropdownMenuItem onSelect={actions.onUngroup}><Ungroup />Ungroup</DropdownMenuItem>}
             <DropdownMenuSeparator />
-            <DropdownMenuItem variant="destructive" onSelect={actions.onDelete}><Trash2 />Delete</DropdownMenuItem>
+            <DropdownMenuItem className="text-destructive focus:text-destructive" onSelect={actions.onDelete}><Trash2 />Delete</DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       </header>

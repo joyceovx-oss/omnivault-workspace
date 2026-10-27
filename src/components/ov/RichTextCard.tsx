@@ -41,7 +41,7 @@ export function RichTextBody({
 
   const editor = useEditor({
     extensions,
-    content: sanitizeDoc(doc) as RichDoc,
+    content: sanitizeDoc(doc) as never,
     editable: editing,
     immediatelyRender: false,
     editorProps: { attributes: { class: "ov-prose min-h-[2rem]", "aria-label": "Card content" } },
@@ -99,11 +99,11 @@ function Toolbar({ editor }: { editor: Editor }) {
       "Link",
       Link2,
       async () => {
-        const prev = editor.getAttributes("link").href as string | undefined;
+        const prev = editor.getAttributes("link")["href"] as string | undefined;
         const v = await prompt({ title: "Link", label: "URL (leave the current link to keep it)", initial: prev ?? "https://" });
         if (v === null) return;
         const url = safeUrl(v);
-        if (!url) return toast.error("That link isn't a safe web address.");
+        if (!url) return void toast.error("That link isn't a safe web address.");
         c().extendMarkRange("link").setLink({ href: url }).run();
       },
       editor.isActive("link"),
