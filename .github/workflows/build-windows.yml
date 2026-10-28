@@ -1,0 +1,69 @@
+name: Build Windows desktop installer
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - side
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows:
+    name: Test and package Windows app
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      CARGO_TERM_COLOR: always
+      RUST_BACKTRACE: 1
+
+    steps:
+      - name: Check out feature branch
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.2.22
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Install JavaScript dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Run tests
+        run: bun run test
+
+      - name: Build production frontend
+        run: bun run build
+
+      - name: Build Tauri Windows installer
+        run: bun run tauri:build
+
+      - name: Verify installer was generated
+        shell: pwsh
+        run: |
+          $installers = Get-ChildItem -Path "src-tauri/target/release/bundle" -Recurse -File -Include *.exe,*.msi
+          if (-not $installers) {
+            throw "Tauri completed without producing a Windows .exe or .msi installer."
+          }
+          $installers | ForEach-Object { Write-Host "Installer: $($_.FullName)" }
+
+      - name: Upload Windows installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: omnivault-windows-installer
+          path: |
+            src-tauri/target/release/bundle/**/*.exe
+            src-tauri/target/release/bundle/**/*.msi
+          if-no-files-found: error
+          retention-days: 30
