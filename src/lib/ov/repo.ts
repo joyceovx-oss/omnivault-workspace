@@ -8,7 +8,8 @@ import {
   replaceCard,
   uid,
 } from "./cards";
-import type { Card, Category, Project, Section, SectionData, Template, ItemReference } from "./types";
+import type { Card, Category, Project, Section, SectionData, Template, ItemReference, Tag } from "./types";
+import { createVault as createEncryptedVault, deleteCardSecret, saveCardSecret as saveEncryptedCardSecret } from "./vault";
 
 const now = () => Date.now();
 
@@ -22,6 +23,9 @@ export function addAttachment(file: File | Blob, name: string) {
     db.attachments.add({ id, name, mime: file.type || "application/octet-stream", size: file.size, blob: file, createdAt: now() }),
   ).then(() => id);
 }
+
+export const initializeSecretsVault = (passphrase: string) => persist(() => createEncryptedVault(passphrase));
+export const saveSecretForCard = (cardId: string, secret: string) => persist(() => saveEncryptedCardSecret(cardId, secret));
 
 /** Copy attachment blobs so the clone owns independent records. */
 async function copyAttachments(cards: Card[]): Promise<Record<string, string>> {
@@ -151,8 +155,36 @@ export function mutateCards(sectionId: string, fn: (cards: Card[]) => Card[]) {
   );
 }
 
-export const updateCard = (sectionId: string, card: Card) =>
-  mutateCards(sectionId, (cards) => replaceCard(cards, card));
+async function resolveCardTags(card: Card): Promise<Card> {
+  if (card.type === "composite")
+    return { ...card, children: await Promise.all(card.children.map((child) => resolveCardTags(child))) as typeof card.children };
+  const names = new Map<string, string>();
+  for (const name of (card.tags ?? []).map(normalizeTagName).filter(Boolean))
+    if (!names.has(name.toLowerCase())) names.set(name.toLowerCase(), name);
+  if (names.size) {
+    const records: Tag[] = [];
+    for (const [normalized, name] of names.entries()) {
+      let tag = await db.tags.where("normalized").equals(normalized).first();
+      if (!tag) {
+        tag = { id: uid(), name, normalized, createdAt: now() };
+        await db.tags.add(tag);
+      }
+      records.push(tag);
+    }
+    return { ...card, tags: records.map((tag) => tag.name), tagIds: records.map((tag) => tag.id) };
+  }
+  if (card.tagIds?.length) {
+    const records = (await db.tags.bulkGet(card.tagIds)).filter((tag): tag is Tag => !!tag);
+    return { ...card, tags: records.map((tag) => tag.name), tagIds: records.map((tag) => tag.id) };
+  }
+  return card;
+}
+
+export const updateCard = (sectionId: string, card: Card) => persist(() => db.transaction("rw", db.sections, db.tags, async () => {
+  const section = await db.sections.get(sectionId);
+  if (!section) throw new Error("Section not found");
+  await db.sections.update(sectionId, { cards: replaceCard(section.cards, await resolveCardTags(card)) });
+}));
 
 export async function duplicateCard(sectionId: string, card: Card) {
   const map = await persist(() => copyAttachments([card]));
@@ -237,14 +269,27 @@ export const toggleFavorite = (type: ItemReference["type"], targetId: string) =>
   if (await db.references.get(id)) await db.references.delete(id);
   else await db.references.put({ id, kind: "favorite", type, targetId, accessedAt: now() });
 });
-export const recordRecent = (type: ItemReference["type"], targetId: string) => persist(() => db.references.put({ id: `recent:${type}:${targetId}`, kind: "recent", type, targetId, accessedAt: now() }));
-export const permanentlyDelete = (id: string) => persist(() => db.transaction("rw", db.trash, db.references, async () => {
-  const item = await db.trash.get(id);
-  if (!item) return;
-  const ids = item.type === "project" ? [item.project.id, ...item.sections.flatMap((s) => [s.id, ...s.cards.flatMap((c) => c.type === "composite" ? [c.id, ...c.children.map((ch) => ch.id)] : [c.id])])] : item.type === "section" ? [item.section.id, ...item.section.cards.flatMap((c) => c.type === "composite" ? [c.id, ...c.children.map((ch) => ch.id)] : [c.id])] : [item.card.id, ...(item.card.type === "composite" ? item.card.children.map((c) => c.id) : [])];
-  await db.references.where("targetId").anyOf(ids).delete();
-  await db.trash.delete(id);
+export const recordRecent = (type: ItemReference["type"], targetId: string) => persist(() => db.transaction("rw", db.references, async () => {
+  const id = `recent:${type}:${targetId}`;
+  const previous = await db.references.get(id);
+  await db.references.put({ id, kind: "recent", type, targetId, accessedAt: Math.max(now(), (previous?.accessedAt ?? 0) + 1) });
+  const recent = await db.references.where("kind").equals("recent").sortBy("accessedAt");
+  if (recent.length > 30) await db.references.bulkDelete(recent.slice(0, recent.length - 30).map((item) => item.id));
 }));
+export const clearRecentHistory = () => persist(() => db.references.where("kind").equals("recent").delete());
+export async function permanentlyDelete(id: string): Promise<void> {
+  let secretIds: string[] = [];
+  await persist(() => db.transaction("rw", db.trash, db.references, async () => {
+    const item = await db.trash.get(id);
+    if (!item) return;
+    const cardIds = (cards: Card[]) => cards.flatMap((card) => card.type === "composite" ? [card.id, ...card.children.map((child) => child.id)] : [card.id]);
+    const ids = item.type === "project" ? [item.project.id, ...item.sections.flatMap((section) => [section.id, ...cardIds(section.cards)])] : item.type === "section" ? [item.section.id, ...cardIds(item.section.cards)] : [item.card.id, ...(item.card.type === "composite" ? item.card.children.map((card) => card.id) : [])];
+    secretIds = item.type === "project" ? item.sections.flatMap((section) => cardIds(section.cards)) : item.type === "section" ? cardIds(item.section.cards) : cardIds([item.card]);
+    await db.references.where("targetId").anyOf(ids).delete();
+    await db.trash.delete(id);
+  }));
+  await Promise.all(secretIds.map((secretId) => persist(() => deleteCardSecret(secretId))));
+}
 export const restoreTrash = (id: string) => persist(() => db.transaction("rw", db.projects, db.sections, db.trash, async () => {
   const item = await db.trash.get(id);
   if (!item) throw new Error("Trash item not found");
@@ -275,4 +320,88 @@ export const restoreTrash = (id: string) => persist(() => db.transaction("rw", d
     await db.sections.update(section.id, { cards });
   }
   await db.trash.delete(id);
+}));
+
+export function normalizeTagName(name: string): string {
+  return name.trim().replace(/\s+/g, " ");
+}
+
+export async function ensureTag(name: string): Promise<Tag> {
+  const cleaned = normalizeTagName(name);
+  if (!cleaned) throw new Error("Tag name cannot be empty.");
+  const normalized = cleaned.toLowerCase();
+  return persist(() => db.transaction("rw", db.tags, async () => {
+    const existing = await db.tags.where("normalized").equals(normalized).first();
+    if (existing) return existing;
+    const tag: Tag = { id: uid(), name: cleaned, normalized, createdAt: now() };
+    await db.tags.add(tag);
+    return tag;
+  }));
+}
+
+function mapCards(cards: Card[], update: (card: Card) => Card): Card[] {
+  return cards.map((card) => {
+    if (card.type !== "composite") return update(card);
+    return update({ ...card, children: mapCards(card.children, update) } as Card) as Card;
+  });
+}
+
+function renameCardTag(card: Card, tag: Tag, oldNormalized: string): Card {
+  if (card.tagIds?.includes(tag.id))
+    return { ...card, tags: [...(card.tags ?? []).filter((name) => normalizeTagName(name).toLowerCase() !== oldNormalized && normalizeTagName(name).toLowerCase() !== tag.normalized), tag.name] };
+  return card;
+}
+
+function removeCardTag(card: Card, tagId: string, name: string): Card {
+  return {
+    ...card,
+    tagIds: (card.tagIds ?? []).filter((id) => id !== tagId),
+    tags: (card.tags ?? []).filter((tag) => normalizeTagName(tag).toLowerCase() !== normalizeTagName(name).toLowerCase()),
+  };
+}
+
+export const renameTag = (id: string, name: string) => {
+  const cleaned = normalizeTagName(name);
+  if (!cleaned) throw new Error("Tag name cannot be empty.");
+  const normalized = cleaned.toLowerCase();
+  return persist(() => db.transaction("rw", db.tags, db.sections, db.templates, db.trash, async () => {
+    const tag = await db.tags.get(id);
+    if (!tag) throw new Error("Tag not found.");
+    const duplicate = await db.tags.where("normalized").equals(normalized).first();
+    if (duplicate && duplicate.id !== id) throw new Error("A tag with this name already exists.");
+    const oldNormalized = tag.normalized;
+    const renamed = { ...tag, name: cleaned, normalized };
+    await db.tags.put(renamed);
+    for (const section of await db.sections.toArray())
+      await db.sections.put({ ...section, cards: mapCards(section.cards, (card) => renameCardTag(card, renamed, oldNormalized)) });
+    for (const template of await db.templates.toArray()) {
+      if (template.level === "card") await db.templates.put({ ...template, card: mapCards([template.card], (card) => renameCardTag(card, renamed, oldNormalized))[0]! });
+      else if (template.level === "section") await db.templates.put({ ...template, section: { ...template.section, cards: mapCards(template.section.cards, (card) => renameCardTag(card, renamed, oldNormalized)) } });
+      else await db.templates.put({ ...template, sections: template.sections.map((section) => ({ ...section, cards: mapCards(section.cards, (card) => renameCardTag(card, renamed, oldNormalized)) })) });
+    }
+    for (const item of await db.trash.toArray()) {
+      if (item.type === "project") await db.trash.put({ ...item, sections: item.sections.map((s) => ({ ...s, cards: mapCards(s.cards, (card) => renameCardTag(card, renamed, oldNormalized)) })) });
+      else if (item.type === "section") await db.trash.put({ ...item, section: { ...item.section, cards: mapCards(item.section.cards, (card) => renameCardTag(card, renamed, oldNormalized)) } });
+      else await db.trash.put({ ...item, card: mapCards([item.card], (card) => renameCardTag(card, renamed, oldNormalized))[0]! });
+    }
+    return renamed;
+  }));
+};
+
+export const deleteTag = (id: string) => persist(() => db.transaction("rw", db.tags, db.sections, db.templates, db.trash, async () => {
+  const tag = await db.tags.get(id);
+  if (!tag) return;
+  for (const section of await db.sections.toArray())
+    await db.sections.put({ ...section, cards: mapCards(section.cards, (card) => removeCardTag(card, id, tag.name)) });
+  for (const template of await db.templates.toArray()) {
+    if (template.level === "card") await db.templates.put({ ...template, card: mapCards([template.card], (card) => removeCardTag(card, id, tag.name))[0]! });
+    else if (template.level === "section") await db.templates.put({ ...template, section: { ...template.section, cards: mapCards(template.section.cards, (card) => removeCardTag(card, id, tag.name)) } });
+    else await db.templates.put({ ...template, sections: template.sections.map((section) => ({ ...section, cards: mapCards(section.cards, (card) => removeCardTag(card, id, tag.name)) })) });
+  }
+  for (const item of await db.trash.toArray()) {
+    if (item.type === "project") await db.trash.put({ ...item, sections: item.sections.map((s) => ({ ...s, cards: mapCards(s.cards, (card) => removeCardTag(card, id, tag.name)) })) });
+    else if (item.type === "section") await db.trash.put({ ...item, section: { ...item.section, cards: mapCards(item.section.cards, (card) => removeCardTag(card, id, tag.name)) } });
+    else await db.trash.put({ ...item, card: mapCards([item.card], (card) => removeCardTag(card, id, tag.name))[0]! });
+  }
+  await db.tags.delete(id);
 }));

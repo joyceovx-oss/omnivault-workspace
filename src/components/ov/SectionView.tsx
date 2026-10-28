@@ -21,6 +21,7 @@ export function SectionView({ section, focusCard }: { section: Section; focusCar
   const [sel, setSel] = useState<string[]>([]);
   const [title, setTitle] = useState(section.title);
   const [desc, setDesc] = useState(section.description);
+  const [newCardId, setNewCardId] = useState<string | null>(null);
   useEffect(() => { setTitle(section.title); setDesc(section.description); setSel([]); setSelecting(false); }, [section.id]);
   const cardTemplates = useLiveQuery(() => db.templates.where("level").equals("card").toArray(), []) as Extract<Template, { level: "card" }>[] | undefined;
   const id = section.id;
@@ -35,6 +36,13 @@ export function SectionView({ section, focusCard }: { section: Section; focusCar
       await mutateCards(id, (cards) => stitch(cards, sel, name));
       setSel([]); setSelecting(false);
       toast.success("Cards stitched");
+    } catch (e) { err(e); }
+  }
+  async function addCard(type: (typeof CARD_TYPES)[number]["type"]) {
+    const card = newCard(type);
+    try {
+      await mutateCards(id, (cards) => [...cards, card]);
+      setNewCardId(card.id);
     } catch (e) { err(e); }
   }
 
@@ -58,13 +66,13 @@ export function SectionView({ section, focusCard }: { section: Section; focusCar
       />
 
       <div className="mt-4 flex flex-wrap items-center gap-2">
-        <Button size="icon" variant="ghost" aria-label="Favorite section" title="Favorite section" aria-pressed={favorites.some((f) => f.targetId === id)} onClick={() => toggleFavorite("section", id).catch(err)}><Star className={`size-4 ${favorites.some((f) => f.targetId === id) ? "fill-current text-primary" : ""}`} /></Button>
+        <Button size="icon" variant="ghost" aria-label={`${favorites.some((f) => f.targetId === id) ? "Unfavorite" : "Favorite"} section`} title={`${favorites.some((f) => f.targetId === id) ? "Unfavorite" : "Favorite"} section`} aria-pressed={favorites.some((f) => f.targetId === id)} onClick={() => toggleFavorite("section", id).catch(err)}><Star className={`size-4 ${favorites.some((f) => f.targetId === id) ? "fill-current text-primary" : ""}`} /></Button>
         {tags.length > 0 && <label className="text-sm text-muted-foreground">Tag <select aria-label="Filter cards by tag" className="max-w-32 rounded border border-input bg-background px-2 py-1 text-foreground" value={tag} onChange={(e) => setTag(e.target.value)}><option value="all">All tags</option>{tags.map((t) => <option key={t}>{t}</option>)}</select></label>}
         <DropdownMenu>
           <DropdownMenuTrigger asChild><Button size="sm"><Plus className="size-4" />Add card<ChevronDown className="size-3.5" /></Button></DropdownMenuTrigger>
           <DropdownMenuContent align="start">
             {CARD_TYPES.map((t) => (
-              <DropdownMenuItem key={t.type} onSelect={() => mutateCards(id, (c) => [...c, newCard(t.type)]).catch(err)}>{t.label}</DropdownMenuItem>
+              <DropdownMenuItem key={t.type} onSelect={() => void addCard(t.type)}>{t.label}</DropdownMenuItem>
             ))}
           </DropdownMenuContent>
         </DropdownMenu>
@@ -100,6 +108,7 @@ export function SectionView({ section, focusCard }: { section: Section; focusCar
             key={card.id}
             card={card}
             highlighted={focusCard === card.id}
+            startEditing={card.id === newCardId}
             index={i}
             count={section.cards.length}
             selecting={selecting}

@@ -8,7 +8,7 @@
     "build": "vite build",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build --bundles nsis",
+    "tauri:build": "tauri icon public/contextforge-app-icon.svg --output src-tauri/icons && tauri build --bundles nsis",
     "build:dev": "vite build --mode development",
     "preview": "vite preview",
     "lint": "eslint .",

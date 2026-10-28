@@ -2,7 +2,7 @@ import JSZip from "jszip";
 import { db } from "./db";
 import { cloneCard, collectAttachmentIds, uid } from "./cards";
 import { sanitizeDoc } from "./url";
-import { SCHEMA_VERSION, type Card, type Project, type Section, type Template, type InboxItem, type ItemReference, type TrashItem } from "./types";
+import { SCHEMA_VERSION, type Card, type Project, type Section, type Template, type InboxItem, type ItemReference, type TrashItem, type Tag } from "./types";
 import { persist } from "./status";
 
 export interface Manifest {
@@ -15,6 +15,7 @@ export interface Manifest {
   inbox?: InboxItem[];
   references?: ItemReference[];
   trash?: TrashItem[];
+  tags?: Tag[];
   attachments: { id: string; name: string; mime: string; size: number }[];
 }
 
@@ -22,7 +23,11 @@ export interface Manifest {
 export function scrubCards(cards: Card[]): Card[] {
   return cards.map((c) => {
     if (c.type === "composite") return { ...c, children: scrubCards(c.children) as typeof c.children };
-    if (c.type === "vaultref") return { id: c.id, type: "vaultref", title: c.title, collection: c.collection };
+    if (c.type === "vaultref") return {
+      id: c.id, type: "vaultref", title: c.title, collection: c.collection,
+      identifier: c.identifier ?? "", note: c.note ?? "",
+      ...(c.tags ? { tags: c.tags } : {}), ...(c.tagIds ? { tagIds: c.tagIds } : {}),
+    };
     if (c.type === "richtext") return { ...c, doc: sanitizeDoc(c.doc) as typeof c.doc };
     return c;
   });
@@ -32,7 +37,7 @@ const templateCards = (t: Template): Card[] =>
   t.level === "card" ? [t.card] : t.level === "section" ? t.section.cards : t.sections.flatMap((s) => s.cards);
 
 export async function exportBackup(): Promise<Blob> {
-  const [projects, sections, templates, inbox, references, trash] = await Promise.all([db.projects.toArray(), db.sections.toArray(), db.templates.toArray(), db.inbox.toArray(), db.references.toArray(), db.trash.toArray()]);
+  const [projects, sections, templates, inbox, references, trash, tags] = await Promise.all([db.projects.toArray(), db.sections.toArray(), db.templates.toArray(), db.inbox.toArray(), db.references.toArray(), db.trash.toArray(), db.tags.toArray()]);
   const trashCards = (t: TrashItem) => t.type === "project" ? t.sections.flatMap((s) => s.cards) : t.type === "section" ? t.section.cards : [t.card];
   const used = new Set([...sections.flatMap((s) => collectAttachmentIds(s.cards)), ...templates.flatMap((t) => collectAttachmentIds(templateCards(t))), ...trash.flatMap((t) => collectAttachmentIds(trashCards(t)))]);
   const atts = (await db.attachments.bulkGet([...used])).filter((a): a is NonNullable<typeof a> => !!a);
@@ -44,7 +49,7 @@ export async function exportBackup(): Promise<Blob> {
     projects,
     sections: sections.map((s) => ({ ...s, cards: scrubCards(s.cards) })),
     templates: templates.map(scrubTemplate),
-    inbox, references,
+    inbox, references, tags,
     trash: trash.map((t) => t.type === "project" ? { ...t, sections: t.sections.map((s) => ({ ...s, cards: scrubCards(s.cards) })) } : t.type === "section" ? { ...t, section: { ...t.section, cards: scrubCards(t.section.cards) } } : { ...t, card: scrubCards([t.card])[0] ?? t.card }),
     attachments: atts.map(({ id, name, mime, size }) => ({ id, name, mime, size })),
   };
@@ -68,6 +73,9 @@ export function validateManifest(m: unknown): Manifest {
     if (!Array.isArray(x[k])) throw new Error(`Backup is missing "${k}".`);
   for (const s of x.sections) if (typeof s.id !== "string" || !Array.isArray(s.cards)) throw new Error("A section in the backup is malformed.");
   for (const k of ["inbox", "references", "trash"] as const) if (x[k] !== undefined && !Array.isArray(x[k])) throw new Error(`Backup has invalid "${k}".`);
+  if (x.tags !== undefined && !Array.isArray(x.tags)) throw new Error('Backup has invalid "tags".');
+  for (const tag of x.tags ?? [])
+    if (!tag || typeof tag.id !== "string" || typeof tag.name !== "string") throw new Error("A tag in the backup is malformed.");
   for (const i of x.inbox ?? []) if (typeof i.text !== "string" || typeof i.id !== "string") throw new Error("Invalid Inbox item.");
   for (const t of x.trash ?? []) if (!["project", "section", "card"].includes(t.type) || typeof t.id !== "string") throw new Error("Invalid Trash item.");
   return x;
@@ -90,6 +98,48 @@ export async function importBackup(file: Blob): Promise<number> {
     throw new Error("manifest.json is not valid JSON.");
   }
   const m = validateManifest(parsed);
+  const sourceCards: Card[] = [
+    ...m.sections.flatMap((section) => section.cards),
+    ...m.templates.flatMap((template) => template.level === "card" ? [template.card] : template.level === "section" ? template.section.cards : template.sections.flatMap((section) => section.cards)),
+    ...(m.trash ?? []).flatMap((item) => item.type === "project" ? item.sections.flatMap((section) => section.cards) : item.type === "section" ? item.section.cards : [item.card]),
+  ];
+  const tagLabels = new Set<string>();
+  const collectTags = (cards: Card[]) => cards.forEach((card) => {
+    (card.tags ?? []).forEach((name) => { if (name.trim()) tagLabels.add(name.trim().replace(/\s+/g, " ")); });
+    if (card.type === "composite") collectTags(card.children);
+  });
+  collectTags(sourceCards);
+  const existingTags = await db.tags.toArray();
+  const tagsByName = new Map(existingTags.map((tag) => [tag.normalized, tag]));
+  const tagsById = new Map(existingTags.map((tag) => [tag.id, tag]));
+  const tagIdMap: Record<string, string> = {};
+  const tagsToAdd: Tag[] = [];
+  for (const tag of m.tags ?? []) {
+    const name = tag.name.trim().replace(/\s+/g, " ");
+    const normalized = name.toLowerCase();
+    if (!name) continue;
+    let target = tagsByName.get(normalized);
+    if (!target) {
+      target = { id: uid(), name, normalized, createdAt: Date.now() };
+      tagsByName.set(normalized, target);
+      tagsById.set(target.id, target);
+      tagsToAdd.push(target);
+    }
+    tagIdMap[tag.id] = target.id;
+  }
+  for (const name of tagLabels) {
+    const normalized = name.toLowerCase();
+    if (tagsByName.has(normalized)) continue;
+    const tag: Tag = { id: uid(), name, normalized, createdAt: Date.now() };
+    tagsByName.set(normalized, tag);
+    tagsById.set(tag.id, tag);
+    tagsToAdd.push(tag);
+  }
+  for (const oldTag of m.tags ?? []) {
+    const normalized = oldTag.name.trim().replace(/\s+/g, " ").toLowerCase();
+    const tag = tagsByName.get(normalized);
+    if (tag) tagIdMap[oldTag.id] = tag.id;
+  }
   const attMap: Record<string, string> = {};
   const blobs: { id: string; name: string; mime: string; size: number; blob: Blob }[] = [];
   for (const a of m.attachments) {
@@ -104,12 +154,20 @@ export async function importBackup(file: Blob): Promise<number> {
   const mappedId = (id: string): string => idMap[id] ?? (idMap[id] = uid());
   const fix = (cards: Card[]) => scrubCards(cards.map((c) => {
     const next = cloneCard(c, { attachmentMap: attMap });
-    next.id = mappedId(c.id);
-    if (c.type === "composite" && next.type === "composite") next.children.forEach((ch, i) => { const old = c.children[i]; if (old) ch.id = mappedId(old.id); });
+    const setCardData = (oldCard: Card, newCard: Card) => {
+      newCard.id = mappedId(oldCard.id);
+      const ids = [...new Set([...(oldCard.tagIds ?? []).map((id) => tagIdMap[id]).filter((id): id is string => !!id), ...(oldCard.tags ?? []).map((name) => tagsByName.get(name.trim().replace(/\s+/g, " ").toLowerCase())?.id).filter((id): id is string => !!id)])];
+      newCard.tagIds = ids;
+      newCard.tags = ids.map((id) => tagsById.get(id)?.name).filter((name): name is string => !!name);
+      if (oldCard.type === "composite" && newCard.type === "composite")
+        oldCard.children.forEach((child, index) => { const cloned = newCard.children[index]; if (cloned) setCardData(child, cloned); });
+    };
+    setCardData(c, next);
     return next;
   }));
   const base = (await db.projects.count()) || 0;
-  await persist(() => db.transaction("rw", [db.projects, db.sections, db.templates, db.attachments, db.inbox, db.references, db.trash], async () => {
+  await persist(() => db.transaction("rw", [db.projects, db.sections, db.templates, db.attachments, db.inbox, db.references, db.trash, db.tags], async () => {
+    if (tagsToAdd.length) await db.tags.bulkAdd(tagsToAdd);
     for (const b of blobs) await db.attachments.add({ ...b, createdAt: Date.now() });
     const pMap: Record<string, string> = {};
     for (const [i, p] of m.projects.entries()) {
@@ -139,6 +197,8 @@ export async function importBackup(file: Blob): Promise<number> {
       const targetId = idMap[r.targetId];
       if (targetId && ["favorite", "recent"].includes(r.kind) && ["project", "section", "card"].includes(r.type)) await db.references.put({ ...r, targetId, id: `${r.kind}:${r.type}:${targetId}` });
     }
+    const recent = await db.references.where("kind").equals("recent").sortBy("accessedAt");
+    if (recent.length > 30) await db.references.bulkDelete(recent.slice(0, recent.length - 30).map((item) => item.id));
   }));
   return m.projects.length;
 }

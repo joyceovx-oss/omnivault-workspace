@@ -39,13 +39,23 @@ interface EncryptedCredential {
   updatedAt: number;
 }
 
+interface EncryptedCardSecret {
+  id: string;
+  version: 1;
+  iv: string;
+  ciphertext: string;
+  updatedAt: number;
+}
+
 class SecretsDatabase extends Dexie {
   config!: Table<VaultConfig, string>;
   credentials!: Table<EncryptedCredential, string>;
+  cardSecrets!: Table<EncryptedCardSecret, string>;
 
   constructor() {
     super("omnivault-secrets");
     this.version(1).stores({ config: "id", credentials: "id, updatedAt" });
+    this.version(2).stores({ config: "id", credentials: "id, updatedAt", cardSecrets: "id, updatedAt" });
   }
 }
 
@@ -263,4 +273,60 @@ export async function saveCredential(
 export async function deleteCredential(id: string): Promise<void> {
   requireKey();
   await secretsDb.credentials.delete(id);
+}
+
+export async function hasCardSecret(id: string): Promise<boolean> {
+  return !!(await secretsDb.cardSecrets.get(id));
+}
+
+export async function saveCardSecret(id: string, secret: string): Promise<void> {
+  const key = requireKey();
+  if (!secret) throw new Error("Secret cannot be empty.");
+  const iv = randomBytes(12);
+  const plaintext = encoder.encode(secret);
+  try {
+    const ciphertext = new Uint8Array(
+      await cryptoApi().subtle.encrypt(
+        { name: "AES-GCM", iv, additionalData: encoder.encode(`${id}:card-secret:v1`) },
+        key,
+        plaintext,
+      ),
+    );
+    await secretsDb.cardSecrets.put({
+      id,
+      version: 1,
+      iv: toBase64(iv),
+      ciphertext: toBase64(ciphertext),
+      updatedAt: Date.now(),
+    });
+  } finally {
+    plaintext.fill(0);
+  }
+}
+
+export async function readCardSecret(id: string): Promise<string> {
+  const key = requireKey();
+  const row = await secretsDb.cardSecrets.get(id);
+  if (!row || row.version !== 1) throw new Error("Secret data is missing or unsupported.");
+  try {
+    const plaintext = new Uint8Array(
+      await cryptoApi().subtle.decrypt(
+        { name: "AES-GCM", iv: fromBase64(row.iv), additionalData: encoder.encode(`${id}:card-secret:v1`) },
+        key,
+        fromBase64(row.ciphertext),
+      ),
+    );
+    try {
+      return decoder.decode(plaintext);
+    } finally {
+      plaintext.fill(0);
+    }
+  } catch {
+    lockVault();
+    throw new Error("This secret failed authentication and could not be decrypted.");
+  }
+}
+
+export async function deleteCardSecret(id: string): Promise<void> {
+  await secretsDb.cardSecrets.delete(id);
 }

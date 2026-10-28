@@ -39,7 +39,7 @@ export function newCard(type: Exclude<CardType, "composite">): LeafCard {
     case "link":
       return { id, type, title: "Link", url: "", notes: "" };
     case "vaultref":
-      return { id, type, title: "Secrets", collection: "Default" };
+      return { id, type, title: "Secrets", identifier: "", note: "", collection: "Default" };
   }
 }
 

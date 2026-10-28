@@ -67,9 +67,12 @@ describe("url safety", () => {
 });
 
 describe("backup", () => {
-  it("exports vault references with only their label", () => {
-    const leak = { id: "v", type: "vaultref", title: "S", collection: "Prod", secret: "hunter2" } as unknown as Card;
-    expect(JSON.stringify(scrubCards([leak]))).not.toContain("hunter2");
+  it("exports visible Secret-card metadata but excludes secret payload fields", () => {
+    const leak = { id: "v", type: "vaultref", title: "S", collection: "Prod", identifier: "account", note: "safe note", secret: "hunter2" } as unknown as Card;
+    const scrubbed = JSON.stringify(scrubCards([leak]));
+    expect(scrubbed).not.toContain("hunter2");
+    expect(scrubbed).toContain("account");
+    expect(scrubbed).toContain("safe note");
   });
   it("rejects files that aren't OmniVault backups", () => {
     expect(() => validateManifest({ app: "other" })).toThrow();

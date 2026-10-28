@@ -1,4 +1,4 @@
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 export type Category = "general" | "writing" | "software" | "art" | "research";
 export const CATEGORIES: { value: Category; label: string }[] = [
@@ -19,6 +19,13 @@ export interface Project {
   updatedAt: number;
 }
 
+export interface Tag {
+  id: string;
+  name: string;
+  normalized: string;
+  createdAt: number;
+}
+
 export interface Section {
   id: string;
   projectId: string;
@@ -35,6 +42,7 @@ interface Base {
   id: string;
   title: string;
   tags?: string[];
+  tagIds?: string[];
 }
 export interface RichTextCard extends Base {
   type: "richtext";
@@ -75,6 +83,9 @@ export interface LinkCard extends Base {
 /** Holds only a harmless collection label — never secret values. */
 export interface VaultRefCard extends Base {
   type: "vaultref";
+  identifier: string;
+  note: string;
+  /** Kept for older records; new secret cards no longer use collections. */
   collection: string;
 }
 

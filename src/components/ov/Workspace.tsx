@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
-import { AlertCircle, Check, Download, FolderOpen, KeyRound, Loader2, Menu, Moon, Settings, Sun, Upload, Vault, Search, Plus, Star } from "lucide-react";
+import { AlertCircle, Check, Download, FolderOpen, Loader2, Menu, Moon, Settings, Sun, Upload, Search, Plus, Star } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
@@ -13,9 +13,9 @@ import { DialogProvider } from "./dialogs";
 import { Sidebar } from "./Sidebar";
 import { SectionView } from "./SectionView";
 import { CaptureDialog, SearchDialog, UtilityPanel, type UtilityView } from "./Productivity";
+import { SecretsVault } from "./SecretsVault";
 import { recordRecent, toggleFavorite } from "@/lib/ov/repo";
 import type { SearchResult } from "@/lib/ov/search";
-import { SecretsVault } from "./SecretsVault";
 
 function useTheme() {
   const [dark, setDark] = useState(false);
@@ -48,9 +48,9 @@ function Inner() {
   const [sectionId, setSectionId] = useState<string | null>(null);
   const [navOpen, setNavOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [vaultOpen, setVaultOpen] = useState(false);
-  const [vaultCollection, setVaultCollection] = useState<string | null>(null);
+  const [legacyVaultOpen, setLegacyVaultOpen] = useState(false);
   const [view, setView] = useState<UtilityView | null>(null);
+  const [selectedTagId, setSelectedTagId] = useState<string | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [captureOpen, setCaptureOpen] = useState(false);
   const [focusCard, setFocusCard] = useState<string | null>(null);
@@ -58,17 +58,18 @@ function Inner() {
   const [collapsed, setCollapsed] = useState(() => typeof window !== "undefined" && localStorage.getItem("ov-sidebar") === "collapsed");
   const [dark, setDark] = useTheme();
 
-  useEffect(() => {
-    const openVault = (event: Event) => {
-      const collection = (event as CustomEvent<{ collection?: string }>).detail?.collection;
-      setVaultCollection(collection?.trim() || null);
-      setVaultOpen(true);
-    };
-    window.addEventListener("ov-open-vault", openVault);
-    return () => window.removeEventListener("ov-open-vault", openVault);
-  }, []);
-
   useEffect(() => { localStorage.setItem("ov-sidebar", collapsed ? "collapsed" : "expanded"); }, [collapsed]);
+  useEffect(() => {
+    const openTag = (event: Event) => {
+      const tagId = (event as CustomEvent<{ tagId?: string }>).detail?.tagId;
+      if (!tagId) return;
+      setSelectedTagId(tagId);
+      setView("tags");
+      setNavOpen(false);
+    };
+    window.addEventListener("ov-open-tag", openTag);
+    return () => window.removeEventListener("ov-open-tag", openTag);
+  }, []);
 
   // One query so project and sections always resolve together for the same id.
   const data = useLiveQuery(async () => {
@@ -84,16 +85,17 @@ function Inner() {
   // If the selected project disappears (deleted elsewhere), restore the empty state.
   useEffect(() => { if (projectId && fresh && !data?.project) setProjectId(null); }, [data, fresh, projectId]);
 
-  useEffect(() => { if (projectId) recordRecent("project", projectId).catch(() => {}); }, [projectId]);
-  useEffect(() => { if (section?.id && !view) recordRecent("section", section.id).catch(() => {}); }, [section?.id, view]);
+  useEffect(() => { if (projectId) recordRecent("project", projectId).catch(() => toast.error("Could not update recent history")); }, [projectId]);
+  useEffect(() => { if (section?.id && !view) recordRecent("section", section.id).catch(() => toast.error("Could not update recent history")); }, [section?.id, view]);
   useEffect(() => {
     if (!focusCard || view) return;
     const el = document.getElementById(`card-${focusCard}`);
     if (el) { el.scrollIntoView({ block: "center" }); el.focus({ preventScroll: true }); }
   }, [focusCard, section, view]);
-  const selectProject = (id: string | null, sid: string | null = null) => { setView(null); setFocusCard(null); setProjectId(id); setSectionId(sid); setNavOpen(false); };
-  const navigateResult = (r: SearchResult) => { if (!r.projectId) return; selectProject(r.projectId, r.sectionId ?? null); setFocusCard(r.cardId ?? null); if (r.cardId) recordRecent("card", r.cardId).catch(() => {}); };
-  const navProps = { projectId: view ? null : projectId, sectionId: section?.id ?? null, onSelectProject: selectProject, onSelectSection: (id: string) => { setView(null); setFocusCard(null); setSectionId(id); setNavOpen(false); }, utilityView: view, onOpenUtility: (v: UtilityView) => { setView(v); setNavOpen(false); } };
+  const selectProject = (id: string | null, sid: string | null = null) => { setView(null); setSelectedTagId(null); setFocusCard(null); setProjectId(id); setSectionId(sid); setNavOpen(false); };
+  const navigateResult = (r: SearchResult) => { if (!r.projectId) return; selectProject(r.projectId, r.sectionId ?? null); setFocusCard(r.cardId ?? null); if (r.cardId) recordRecent("card", r.cardId).catch(() => toast.error("Could not update recent history")); };
+  const openTag = (tagId: string) => { setSelectedTagId(tagId); setView("tags"); setNavOpen(false); };
+  const navProps = { projectId: view ? null : projectId, sectionId: section?.id ?? null, onSelectProject: selectProject, onSelectSection: (id: string) => { setView(null); setSelectedTagId(null); setFocusCard(null); setSectionId(id); setNavOpen(false); }, utilityView: view, onOpenUtility: (v: UtilityView) => { setView(v); setSelectedTagId(null); setNavOpen(false); } };
   const sidebar = <Sidebar {...navProps} collapsed={collapsed} onToggleCollapsed={() => setCollapsed((v) => !v)} />;
   const drawer = <Sidebar {...navProps} />;
 
@@ -101,7 +103,7 @@ function Inner() {
     <div className="flex h-dvh flex-col bg-background text-foreground">
       <header className="flex h-12 shrink-0 items-center gap-2 border-b border-border px-3">
         <Button size="icon" variant="ghost" className="size-9 md:hidden" onClick={() => setNavOpen(true)} aria-label="Open navigation"><Menu className="size-5" /></Button>
-        <span className="flex items-center gap-1.5 font-semibold tracking-tight"><Vault className="size-5 text-primary" />OmniVault</span>
+        <span className="flex items-center gap-1.5 font-semibold tracking-tight"><img src="/contextforge-app-icon.svg" alt="" aria-hidden="true" className="size-5 rounded-[5px]" />OmniVault</span>
         {project && <span className="hidden truncate text-sm text-muted-foreground sm:inline">/ {project.name}{section ? ` / ${section.title}` : ""}</span>}
         <div className="ml-auto flex items-center gap-1">
           <SaveIndicator />
@@ -117,10 +119,10 @@ function Inner() {
           <SheetContent side="left" className="w-72 bg-sidebar p-0"><SheetTitle className="sr-only">Navigation</SheetTitle>{drawer}</SheetContent>
         </Sheet>
         <main className="min-w-0 flex-1 overflow-y-auto">
-          {view ? <UtilityPanel view={view} onNavigate={navigateResult} onCapture={() => setCaptureOpen(true)} /> : projectId && section ? (
+          {view ? <UtilityPanel view={view} onNavigate={navigateResult} onCapture={() => setCaptureOpen(true)} selectedTagId={selectedTagId} /> : projectId && section ? (
             <>
               <div className="mx-auto w-full max-w-3xl px-4 pt-5 sm:px-8">
-                <div className="flex items-center gap-2"><p className="min-w-0 flex-1 truncate text-sm font-medium text-muted-foreground">{project?.name}</p><Button size="icon" variant="ghost" className="size-7" aria-label="Favorite project" title="Favorite project" aria-pressed={favorites.some((f) => f.targetId === projectId)} onClick={() => toggleFavorite("project", projectId).catch(() => toast.error("Could not save favorite"))}><Star className={cn("size-4", favorites.some((f) => f.targetId === projectId) && "fill-current text-primary")} /></Button></div>
+                <div className="flex items-center gap-2"><p className="min-w-0 flex-1 truncate text-sm font-medium text-muted-foreground">{project?.name}</p><Button size="icon" variant="ghost" className="size-7" aria-label={`${favorites.some((f) => f.targetId === projectId) ? "Unfavorite" : "Favorite"} project`} title={`${favorites.some((f) => f.targetId === projectId) ? "Unfavorite" : "Favorite"} project`} aria-pressed={favorites.some((f) => f.targetId === projectId)} onClick={() => toggleFavorite("project", projectId).catch(() => toast.error("Could not save favorite"))}><Star className={cn("size-4", favorites.some((f) => f.targetId === projectId) && "fill-current text-primary")} /></Button></div>
                 <nav aria-label="Project sections" className="mt-2 border-b border-border">
                   <div role="tablist" className="-mb-px flex gap-1 overflow-x-auto [scrollbar-width:none]">
                     {sections?.map((s) => {
@@ -153,15 +155,15 @@ function Inner() {
           )}
         </main>
       </div>
-      <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} dark={dark} setDark={setDark} onOpenVault={() => { setSettingsOpen(false); setVaultCollection(null); setVaultOpen(true); }} />
-      <SecretsVault open={vaultOpen} onOpenChange={setVaultOpen} initialCollection={vaultCollection} />
-      <SearchDialog open={searchOpen} onOpenChange={setSearchOpen} onNavigate={navigateResult} projectId={projectId} sectionId={section?.id} />
+      <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} dark={dark} setDark={setDark} onOpenLegacyVault={() => setLegacyVaultOpen(true)} />
+      <SecretsVault open={legacyVaultOpen} onOpenChange={setLegacyVaultOpen} initialCollection={null} />
+      <SearchDialog open={searchOpen} onOpenChange={setSearchOpen} onNavigate={navigateResult} onOpenTag={openTag} projectId={projectId} sectionId={section?.id} />
       <CaptureDialog open={captureOpen} onOpenChange={setCaptureOpen} />
     </div>
   );
 }
 
-function SettingsDialog({ open, onOpenChange, dark, setDark, onOpenVault }: { open: boolean; onOpenChange: (o: boolean) => void; dark: boolean; setDark: (d: boolean) => void; onOpenVault: () => void }) {
+function SettingsDialog({ open, onOpenChange, dark, setDark, onOpenLegacyVault }: { open: boolean; onOpenChange: (o: boolean) => void; dark: boolean; setDark: (d: boolean) => void; onOpenLegacyVault: () => void }) {
   const file = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   async function doExport() {
@@ -203,8 +205,8 @@ function SettingsDialog({ open, onOpenChange, dark, setDark, onOpenVault }: { op
         </section>
         <section className="space-y-1">
           <h3 className="text-sm font-medium">Secrets Vault</h3>
-          <p className="text-sm text-muted-foreground">Credentials are encrypted locally and protected by a master password. Vault contents are excluded from workspace backups.</p>
-          <Button size="sm" variant="secondary" onClick={onOpenVault}><KeyRound />Open local vault</Button>
+          <p className="text-sm text-muted-foreground">Secret cards encrypt their secret value locally. Existing standalone credentials remain available in the legacy vault. Losing the master password can make secrets permanently unrecoverable. Master password changes are not currently supported.</p>
+          <Button size="sm" variant="secondary" onClick={onOpenLegacyVault}>Open legacy credentials</Button>
         </section>
       </DialogContent>
     </Dialog>
