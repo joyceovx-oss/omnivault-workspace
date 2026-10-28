@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
-import { AlertCircle, Check, Download, FolderOpen, Loader2, Menu, Moon, Settings, Sun, Upload, Vault } from "lucide-react";
+import { AlertCircle, Check, Download, FolderOpen, Loader2, Menu, Moon, Settings, Sun, Upload, Vault, Search, Plus, Star } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
@@ -12,6 +12,9 @@ import { exportBackup, importBackup } from "@/lib/ov/backup";
 import { DialogProvider } from "./dialogs";
 import { Sidebar } from "./Sidebar";
 import { SectionView } from "./SectionView";
+import { CaptureDialog, SearchDialog, UtilityPanel, type UtilityView } from "./Productivity";
+import { recordRecent, toggleFavorite } from "@/lib/ov/repo";
+import type { SearchResult } from "@/lib/ov/search";
 
 function useTheme() {
   const [dark, setDark] = useState(false);
@@ -44,6 +47,11 @@ function Inner() {
   const [sectionId, setSectionId] = useState<string | null>(null);
   const [navOpen, setNavOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [view, setView] = useState<UtilityView | null>(null);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [captureOpen, setCaptureOpen] = useState(false);
+  const [focusCard, setFocusCard] = useState<string | null>(null);
+  const favorites = useLiveQuery(() => db.references.where("kind").equals("favorite").toArray(), []) ?? [];
   const [collapsed, setCollapsed] = useState(() => typeof window !== "undefined" && localStorage.getItem("ov-sidebar") === "collapsed");
   const [dark, setDark] = useTheme();
 
@@ -63,8 +71,16 @@ function Inner() {
   // If the selected project disappears (deleted elsewhere), restore the empty state.
   useEffect(() => { if (projectId && fresh && !data?.project) setProjectId(null); }, [data, fresh, projectId]);
 
-  const selectProject = (id: string | null, sid: string | null = null) => { setProjectId(id); setSectionId(sid); setNavOpen(false); };
-  const navProps = { projectId, sectionId: section?.id ?? null, onSelectProject: selectProject, onSelectSection: (id: string) => { setSectionId(id); setNavOpen(false); } };
+  useEffect(() => { if (projectId) recordRecent("project", projectId).catch(() => {}); }, [projectId]);
+  useEffect(() => { if (section?.id && !view) recordRecent("section", section.id).catch(() => {}); }, [section?.id, view]);
+  useEffect(() => {
+    if (!focusCard || view) return;
+    const el = document.getElementById(`card-${focusCard}`);
+    if (el) { el.scrollIntoView({ block: "center" }); el.focus({ preventScroll: true }); }
+  }, [focusCard, section, view]);
+  const selectProject = (id: string | null, sid: string | null = null) => { setView(null); setFocusCard(null); setProjectId(id); setSectionId(sid); setNavOpen(false); };
+  const navigateResult = (r: SearchResult) => { if (!r.projectId) return; selectProject(r.projectId, r.sectionId ?? null); setFocusCard(r.cardId ?? null); if (r.cardId) recordRecent("card", r.cardId).catch(() => {}); };
+  const navProps = { projectId: view ? null : projectId, sectionId: section?.id ?? null, onSelectProject: selectProject, onSelectSection: (id: string) => { setView(null); setFocusCard(null); setSectionId(id); setNavOpen(false); }, utilityView: view, onOpenUtility: (v: UtilityView) => { setView(v); setNavOpen(false); } };
   const sidebar = <Sidebar {...navProps} collapsed={collapsed} onToggleCollapsed={() => setCollapsed((v) => !v)} />;
   const drawer = <Sidebar {...navProps} />;
 
@@ -76,6 +92,8 @@ function Inner() {
         {project && <span className="hidden truncate text-sm text-muted-foreground sm:inline">/ {project.name}{section ? ` / ${section.title}` : ""}</span>}
         <div className="ml-auto flex items-center gap-1">
           <SaveIndicator />
+          <Button size="icon" variant="ghost" className="size-9" aria-label="Search" title="Search" onClick={() => setSearchOpen(true)}><Search className="size-4" /></Button>
+          <Button size="icon" variant="ghost" className="size-9" aria-label="Quick capture" title="Quick capture" onClick={() => setCaptureOpen(true)}><Plus className="size-4" /></Button>
           <Button size="icon" variant="ghost" className="size-9" onClick={() => setDark(!dark)} aria-label={dark ? "Switch to light theme" : "Switch to dark theme"}>{dark ? <Sun className="size-4" /> : <Moon className="size-4" />}</Button>
           <Button size="icon" variant="ghost" className="size-9" onClick={() => setSettingsOpen(true)} aria-label="Settings"><Settings className="size-4" /></Button>
         </div>
@@ -86,31 +104,31 @@ function Inner() {
           <SheetContent side="left" className="w-72 bg-sidebar p-0"><SheetTitle className="sr-only">Navigation</SheetTitle>{drawer}</SheetContent>
         </Sheet>
         <main className="min-w-0 flex-1 overflow-y-auto">
-          {projectId && section ? (
+          {view ? <UtilityPanel view={view} onNavigate={navigateResult} onCapture={() => setCaptureOpen(true)} /> : projectId && section ? (
             <>
               <div className="mx-auto w-full max-w-3xl px-4 pt-5 sm:px-8">
-                <p className="truncate text-sm font-medium text-muted-foreground">{project?.name}</p>
+                <div className="flex items-center gap-2"><p className="min-w-0 flex-1 truncate text-sm font-medium text-muted-foreground">{project?.name}</p><Button size="icon" variant="ghost" className="size-7" aria-label="Favorite project" title="Favorite project" aria-pressed={favorites.some((f) => f.targetId === projectId)} onClick={() => toggleFavorite("project", projectId).catch(() => toast.error("Could not save favorite"))}><Star className={cn("size-4", favorites.some((f) => f.targetId === projectId) && "fill-current text-primary")} /></Button></div>
                 <nav aria-label="Project sections" className="mt-2 border-b border-border">
                   <div role="tablist" className="-mb-px flex gap-1 overflow-x-auto [scrollbar-width:none]">
-                    {sections!.map((s) => {
+                    {sections?.map((s) => {
                       const active = s.id === section.id;
                       return (
-                        <button
+                        <Button variant="ghost"
                           key={s.id}
                           role="tab"
                           aria-selected={active}
                           ref={active ? (el) => el?.scrollIntoView({ block: "nearest", inline: "nearest" }) : undefined}
-                          onClick={() => setSectionId(s.id)}
+                          onClick={() => { setFocusCard(null); setSectionId(s.id); }}
                           className={`max-w-48 shrink-0 truncate border-b-2 px-3 py-2 text-sm transition-colors focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${active ? "border-primary font-medium text-foreground" : "border-transparent text-muted-foreground hover:text-foreground"}`}
                         >
                           {s.title || "Untitled"}
-                        </button>
+                        </Button>
                       );
                     })}
                   </div>
                 </nav>
               </div>
-              <SectionView key={section.id} section={section} />
+              <SectionView key={section.id} section={section} focusCard={focusCard} />
             </>
           ) : projectId && sections === undefined ? null : (
             <div className="flex h-full flex-col items-center justify-center px-6 text-center">
@@ -123,6 +141,8 @@ function Inner() {
         </main>
       </div>
       <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} dark={dark} setDark={setDark} />
+      <SearchDialog open={searchOpen} onOpenChange={setSearchOpen} onNavigate={navigateResult} projectId={projectId} sectionId={section?.id} />
+      <CaptureDialog open={captureOpen} onOpenChange={setCaptureOpen} />
     </div>
   );
 }
