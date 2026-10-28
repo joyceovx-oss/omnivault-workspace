@@ -53,7 +53,8 @@ export const secretsDb = new SecretsDatabase();
 let unlockedKey: CryptoKey | null = null;
 
 const cryptoApi = () => {
-  if (!globalThis.crypto?.subtle) throw new Error("Secure cryptography is unavailable in this environment.");
+  if (!globalThis.crypto?.subtle)
+    throw new Error("Secure cryptography is unavailable in this environment.");
   return globalThis.crypto;
 };
 
@@ -63,14 +64,22 @@ function toBase64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
-function fromBase64(value: string): Uint8Array {
+function fromBase64(value: string): Uint8Array<ArrayBuffer> {
   const binary = atob(value);
-  return Uint8Array.from(binary, (char) => char.charCodeAt(0));
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index++) bytes[index] = binary.charCodeAt(index);
+  return bytes;
 }
 
-async function deriveWrappingKey(passphrase: string, salt: Uint8Array) {
+async function deriveWrappingKey(passphrase: string, salt: Uint8Array<ArrayBuffer>) {
   const crypto = cryptoApi();
-  const material = await crypto.subtle.importKey("raw", encoder.encode(passphrase), "PBKDF2", false, ["deriveKey"]);
+  const material = await crypto.subtle.importKey(
+    "raw",
+    encoder.encode(passphrase),
+    "PBKDF2",
+    false,
+    ["deriveKey"],
+  );
   return crypto.subtle.deriveKey(
     { name: "PBKDF2", salt, iterations: KDF_ITERATIONS, hash: "SHA-256" },
     material,
@@ -108,12 +117,17 @@ export async function createVault(passphrase: string): Promise<void> {
   const rawDataKey = randomBytes(32);
   try {
     const wrappingKey = await deriveWrappingKey(passphrase, salt);
-    const wrappedKey = new Uint8Array(await crypto.subtle.encrypt(
-      { name: "AES-GCM", iv: wrapIv, additionalData: KEY_WRAP_AAD },
-      wrappingKey,
-      rawDataKey,
-    ));
-    const dataKey = await crypto.subtle.importKey("raw", rawDataKey, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
+    const wrappedKey = new Uint8Array(
+      await crypto.subtle.encrypt(
+        { name: "AES-GCM", iv: wrapIv, additionalData: KEY_WRAP_AAD },
+        wrappingKey,
+        rawDataKey,
+      ),
+    );
+    const dataKey = await crypto.subtle.importKey("raw", rawDataKey, { name: "AES-GCM" }, false, [
+      "encrypt",
+      "decrypt",
+    ]);
     await secretsDb.config.add({
       id: "config",
       version: VAULT_VERSION,
@@ -132,20 +146,30 @@ export async function createVault(passphrase: string): Promise<void> {
 
 export async function unlockVault(passphrase: string): Promise<void> {
   const config = await secretsDb.config.get("config");
-  if (!config || config.version !== VAULT_VERSION || config.kdf !== "PBKDF2-HMAC-SHA-256" || config.iterations !== KDF_ITERATIONS) {
+  if (
+    !config ||
+    config.version !== VAULT_VERSION ||
+    config.kdf !== "PBKDF2-HMAC-SHA-256" ||
+    config.iterations !== KDF_ITERATIONS
+  ) {
     throw new Error("The local vault configuration is missing or unsupported.");
   }
 
   try {
     const crypto = cryptoApi();
     const wrappingKey = await deriveWrappingKey(passphrase, fromBase64(config.salt));
-    const rawDataKey = new Uint8Array(await crypto.subtle.decrypt(
-      { name: "AES-GCM", iv: fromBase64(config.wrapIv), additionalData: KEY_WRAP_AAD },
-      wrappingKey,
-      fromBase64(config.wrappedKey),
-    ));
+    const rawDataKey = new Uint8Array(
+      await crypto.subtle.decrypt(
+        { name: "AES-GCM", iv: fromBase64(config.wrapIv), additionalData: KEY_WRAP_AAD },
+        wrappingKey,
+        fromBase64(config.wrappedKey),
+      ),
+    );
     try {
-      unlockedKey = await crypto.subtle.importKey("raw", rawDataKey, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
+      unlockedKey = await crypto.subtle.importKey("raw", rawDataKey, { name: "AES-GCM" }, false, [
+        "encrypt",
+        "decrypt",
+      ]);
     } finally {
       rawDataKey.fill(0);
     }
@@ -164,19 +188,35 @@ export async function listCredentials(): Promise<VaultCredential[]> {
   const key = requireKey();
   const crypto = cryptoApi();
   const rows = await secretsDb.credentials.toArray();
-  return Promise.all(rows.map(async (row) => {
-    const plaintext = new Uint8Array(await crypto.subtle.decrypt(
-      { name: "AES-GCM", iv: fromBase64(row.iv), additionalData: encoder.encode(`${row.id}:v${VAULT_VERSION}`) },
-      key,
-      fromBase64(row.ciphertext),
-    ));
-    try {
-      const payload = JSON.parse(decoder.decode(plaintext)) as Omit<VaultCredential, "id" | "createdAt" | "updatedAt">;
-      return { ...payload, id: row.id, createdAt: row.createdAt, updatedAt: row.updatedAt };
-    } finally {
-      plaintext.fill(0);
-    }
-  }));
+  try {
+    return await Promise.all(
+      rows.map(async (row) => {
+        const plaintext = new Uint8Array(
+          await crypto.subtle.decrypt(
+            {
+              name: "AES-GCM",
+              iv: fromBase64(row.iv),
+              additionalData: encoder.encode(`${row.id}:v${VAULT_VERSION}`),
+            },
+            key,
+            fromBase64(row.ciphertext),
+          ),
+        );
+        try {
+          const payload = JSON.parse(decoder.decode(plaintext)) as Omit<
+            VaultCredential,
+            "id" | "createdAt" | "updatedAt"
+          >;
+          return { ...payload, id: row.id, createdAt: row.createdAt, updatedAt: row.updatedAt };
+        } finally {
+          plaintext.fill(0);
+        }
+      }),
+    );
+  } catch {
+    lockVault();
+    throw new Error("A credential failed authentication and could not be decrypted.");
+  }
 }
 
 export async function saveCredential(
@@ -199,11 +239,13 @@ export async function saveCredential(
   const plaintext = encoder.encode(JSON.stringify(payload));
   try {
     const iv = randomBytes(12);
-    const ciphertext = new Uint8Array(await cryptoApi().subtle.encrypt(
-      { name: "AES-GCM", iv, additionalData: encoder.encode(`${id}:v${VAULT_VERSION}`) },
-      key,
-      plaintext,
-    ));
+    const ciphertext = new Uint8Array(
+      await cryptoApi().subtle.encrypt(
+        { name: "AES-GCM", iv, additionalData: encoder.encode(`${id}:v${VAULT_VERSION}`) },
+        key,
+        plaintext,
+      ),
+    );
     const row: EncryptedCredential = {
       id,
       iv: toBase64(iv),

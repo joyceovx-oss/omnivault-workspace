@@ -1,6 +1,8 @@
 import "fake-indexeddb/auto";
 import { webcrypto } from "node:crypto";
+import JSZip from "jszip";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { exportBackup } from "@/lib/ov/backup";
 import {
   createVault,
   deleteCredential,
@@ -52,13 +54,17 @@ describe("local encrypted secrets vault", () => {
     lockVault();
     await expect(listCredentials()).rejects.toThrow(/Unlock the vault/);
     await unlockVault("correct horse battery staple");
-    expect(await listCredentials()).toEqual([{ ...credential, id: saved.id, createdAt: saved.createdAt, updatedAt: saved.updatedAt }]);
+    expect(await listCredentials()).toEqual([
+      { ...credential, id: saved.id, createdAt: saved.createdAt, updatedAt: saved.updatedAt },
+    ]);
   });
 
   it("rejects an incorrect password and stays locked", async () => {
     await createVault("correct horse battery staple");
     lockVault();
-    await expect(unlockVault("incorrect password" )).rejects.toThrow(/incorrect or the vault data is damaged/);
+    await expect(unlockVault("incorrect password")).rejects.toThrow(
+      /incorrect or the vault data is damaged/,
+    );
     expect(isVaultUnlocked()).toBe(false);
   });
 
@@ -67,6 +73,28 @@ describe("local encrypted secrets vault", () => {
     const saved = await saveCredential({ ...credential });
     await secretsDb.credentials.update(saved.id, { iv: "AAAAAAAAAAAAAAAA" });
     await expect(listCredentials()).rejects.toThrow();
+    expect(isVaultUnlocked()).toBe(false);
+  });
+
+  it("persists ciphertext across a database reopen and requires the password again", async () => {
+    await createVault("correct horse battery staple");
+    const saved = await saveCredential({ ...credential });
+    lockVault();
+    secretsDb.close();
+    await secretsDb.open();
+    expect(isVaultUnlocked()).toBe(false);
+    await unlockVault("correct horse battery staple");
+    expect((await listCredentials())[0]?.id).toBe(saved.id);
+  });
+
+  it("excludes vault data from ordinary workspace backups", async () => {
+    await createVault("correct horse battery staple");
+    await saveCredential({ ...credential });
+    const backup = await exportBackup();
+    const zip = await JSZip.loadAsync(backup);
+    const manifest = await zip.file("manifest.json")!.async("string");
+    expect(manifest).not.toContain(credential.secret);
+    expect(manifest).not.toContain(credential.name);
   });
 
   it("deletes credentials only while unlocked", async () => {

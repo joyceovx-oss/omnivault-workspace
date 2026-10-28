@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
-import { AlertCircle, Check, Download, FolderOpen, Loader2, Menu, Moon, Settings, Sun, Upload, Vault, Search, Plus, Star } from "lucide-react";
+import { AlertCircle, Check, Download, FolderOpen, KeyRound, Loader2, Menu, Moon, Settings, Sun, Upload, Vault, Search, Plus, Star } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
@@ -184,7 +184,7 @@ function SettingsDialog({ open, onOpenChange, dark, setDark, onOpenVault }: { op
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
-        <DialogHeader><DialogTitle>Settings</DialogTitle><DialogDescription>Your workspace is stored in this browser only. It doesn't sync between devices.</DialogDescription></DialogHeader>
+        <DialogHeader><DialogTitle>Settings</DialogTitle><DialogDescription>Your workspace is stored on this device only. It doesn't sync between devices.</DialogDescription></DialogHeader>
         <section className="space-y-2">
           <h3 className="text-sm font-medium">Theme</h3>
           <div className="flex gap-2">
