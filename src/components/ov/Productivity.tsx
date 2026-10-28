@@ -21,7 +21,7 @@ export function UtilityNav({ collapsed, view, onOpen }: { collapsed: boolean; vi
 function Filter({ value, onChange, label, options }: { value: string; onChange: (v: string) => void; label: string; options: { id: string; label: string }[] }) {
   return <Select value={value} onValueChange={onChange}><SelectTrigger aria-label={label} className="min-w-0 flex-1"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">All {label.toLowerCase()}</SelectItem>{options.map((o) => <SelectItem key={o.id} value={o.id}>{o.label}</SelectItem>)}</SelectContent></Select>;
 }
-export function SearchDialog({ open, onOpenChange, onNavigate, projectId, sectionId }: { open: boolean; onOpenChange: (v: boolean) => void; onNavigate: (r: SearchResult) => void; projectId: string | null; sectionId?: string }) {
+export function SearchDialog({ open, onOpenChange, onNavigate, projectId, sectionId }: { open: boolean; onOpenChange: (v: boolean) => void; onNavigate: (r: SearchResult) => void; projectId: string | null; sectionId: string | undefined }) {
   const [query, setQuery] = useState(""), [project, setProject] = useState("all"), [type, setType] = useState("all"), [tag, setTag] = useState("all");
   const data = useLiveQuery(async () => {
     const [projects, sections, templates] = await Promise.all([db.projects.toArray(), db.sections.toArray(), db.templates.toArray()]);

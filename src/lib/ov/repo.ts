@@ -206,7 +206,7 @@ export async function insertCardTemplate(sectionId: string, t: Extract<Template,
 export const deleteTemplate = (id: string) => persist(() => db.templates.delete(id));
 
 /* ---------- offline productivity ---------- */
-export const saveCapture = (text: string, id = uid()) => persist(async () => {
+export const saveCapture = (text: string, id: string = uid()) => persist(async () => {
   if (!text.trim()) throw new Error("Enter a note or link.");
   const existing = await db.inbox.get(id);
   await db.inbox.put({ id, text: text.trim(), createdAt: existing?.createdAt ?? now() });
