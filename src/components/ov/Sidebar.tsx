@@ -17,6 +17,7 @@ import {
 } from "@/lib/ov/repo";
 import { CATEGORIES, type Category, type Project, type Section, type Template } from "@/lib/ov/types";
 import { useDialogs } from "./dialogs";
+import { UtilityNav, type UtilityView } from "./Productivity";
 
 const err = (e: unknown) => toast.error(e instanceof Error ? e.message : "Something went wrong.");
 
@@ -27,9 +28,11 @@ interface Props {
   onSelectSection: (id: string) => void;
   collapsed?: boolean;
   onToggleCollapsed?: () => void;
+  utilityView: UtilityView | null;
+  onOpenUtility: (v: UtilityView) => void;
 }
 
-export function Sidebar({ projectId, sectionId, onSelectProject, onSelectSection, collapsed = false, onToggleCollapsed }: Props) {
+export function Sidebar({ projectId, sectionId, onSelectProject, onSelectSection, collapsed = false, onToggleCollapsed, utilityView, onOpenUtility }: Props) {
   const { prompt, confirm } = useDialogs();
   const [showArchived, setShowArchived] = useState(false);
   const [newOpen, setNewOpen] = useState(false);
@@ -55,7 +58,7 @@ export function Sidebar({ projectId, sectionId, onSelectProject, onSelectSection
         </DropdownMenuItem>
         <DropdownMenuSeparator />
         <DropdownMenuItem className="text-destructive focus:text-destructive" onSelect={async () => {
-          if (await confirm({ title: "Delete project?", body: `"${p.name}" and all its sections and cards will be permanently deleted.`, destructive: true, confirm: "Delete project" })) {
+          if (await confirm({ title: "Move project to Trash?", body: `"${p.name}" and its sections can be restored from Trash.`, destructive: true, confirm: "Move to Trash" })) {
             if (projectId === p.id) onSelectProject(null);
             deleteProject(p.id).catch(err);
           }
@@ -97,6 +100,7 @@ export function Sidebar({ projectId, sectionId, onSelectProject, onSelectSection
         {archived.length > 0 && (
           <Button size="icon" variant="ghost" className="size-8 shrink-0 text-muted-foreground" onClick={onToggleCollapsed} aria-label={`Expand sidebar to show archived (${archived.length})`} title={`Archived (${archived.length})`}><Archive className="size-4" /></Button>
         )}
+        <UtilityNav collapsed view={utilityView} onOpen={onOpenUtility} />
         <NewProjectDialog open={newOpen} onOpenChange={setNewOpen} onCreated={(p, s) => onSelectProject(p, s)} />
       </nav>
     );
@@ -161,7 +165,7 @@ export function Sidebar({ projectId, sectionId, onSelectProject, onSelectSection
                     <DropdownMenuItem onSelect={async () => { const n = await prompt({ title: "Save section template", label: "Template name", initial: s.title }); if (n) saveSectionTemplate(n, s).then(() => toast.success("Section template saved")).catch(err); }}><Save />Save as template</DropdownMenuItem>
                     <DropdownMenuSeparator />
                     <DropdownMenuItem className="text-destructive focus:text-destructive" disabled={sections.length === 1} onSelect={async () => {
-                      if (await confirm({ title: "Delete section?", body: `"${s.title}" and its cards will be permanently deleted.`, destructive: true, confirm: "Delete section" })) {
+                      if (await confirm({ title: "Move section to Trash?", body: `"${s.title}" and its cards can be restored from Trash.`, destructive: true, confirm: "Move to Trash" })) {
                         const next = sections.find((x) => x.id !== s.id);
                         await deleteSection(s.id).catch(err);
                         if (sectionId === s.id && next) onSelectSection(next.id);
@@ -174,6 +178,7 @@ export function Sidebar({ projectId, sectionId, onSelectProject, onSelectSection
           </ul>
         </div>
       )}
+      <UtilityNav collapsed={false} view={utilityView} onOpen={onOpenUtility} />
       <NewProjectDialog open={newOpen} onOpenChange={setNewOpen} onCreated={(p, s) => onSelectProject(p, s)} />
     </nav>
   );

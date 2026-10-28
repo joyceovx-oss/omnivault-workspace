@@ -1,4 +1,4 @@
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 export type Category = "general" | "writing" | "software" | "art" | "research";
 export const CATEGORIES: { value: Category; label: string }[] = [
@@ -34,6 +34,7 @@ export type RichDoc = { type: "doc"; content?: unknown[] };
 interface Base {
   id: string;
   title: string;
+  tags?: string[];
 }
 export interface RichTextCard extends Base {
   type: "richtext";
@@ -104,6 +105,14 @@ export interface Attachment {
 }
 
 export type SectionData = Pick<Section, "title" | "description" | "cards">;
+
+export interface InboxItem { id: string; text: string; createdAt: number; }
+export interface ItemReference { id: string; kind: "favorite" | "recent"; type: "project" | "section" | "card"; targetId: string; accessedAt: number; }
+export type TrashItem = { id: string; deletedAt: number } & (
+  | { type: "project"; project: Project; sections: Section[] }
+  | { type: "section"; section: Section }
+  | { type: "card"; card: Card; sectionId: string; projectId: string; index: number }
+);
 
 export type Template =
   | { id: string; level: "card"; name: string; createdAt: number; card: Card }

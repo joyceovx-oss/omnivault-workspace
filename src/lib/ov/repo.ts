@@ -8,7 +8,7 @@ import {
   replaceCard,
   uid,
 } from "./cards";
-import type { Card, Category, Project, Section, SectionData, Template } from "./types";
+import type { Card, Category, Project, Section, SectionData, Template, ItemReference } from "./types";
 
 const now = () => Date.now();
 
@@ -74,7 +74,11 @@ export const updateProject = (id: string, patch: Partial<Project>) =>
 
 export const deleteProject = (id: string) =>
   persist(() =>
-    db.transaction("rw", db.projects, db.sections, async () => {
+    db.transaction("rw", db.projects, db.sections, db.trash, async () => {
+      const project = await db.projects.get(id);
+      if (!project) throw new Error("Project not found");
+      const sections = await db.sections.where("projectId").equals(id).toArray();
+      await db.trash.add({ id: uid(), type: "project", project, sections, deletedAt: now() });
       await db.sections.where("projectId").equals(id).delete();
       await db.projects.delete(id);
     }),
@@ -119,7 +123,12 @@ export async function createSection(projectId: string, data?: SectionData) {
 export const updateSection = (id: string, patch: Partial<Section>) =>
   persist(() => db.sections.update(id, patch));
 
-export const deleteSection = (id: string) => persist(() => db.sections.delete(id));
+export const deleteSection = (id: string) => persist(() => db.transaction("rw", db.sections, db.trash, async () => {
+  const section = await db.sections.get(id);
+  if (!section) throw new Error("Section not found");
+  await db.trash.add({ id: uid(), type: "section", section, deletedAt: now() });
+  await db.sections.delete(id);
+}));
 
 export async function duplicateSection(id: string) {
   const s = await db.sections.get(id);
@@ -195,3 +204,75 @@ export async function insertCardTemplate(sectionId: string, t: Extract<Template,
 }
 
 export const deleteTemplate = (id: string) => persist(() => db.templates.delete(id));
+
+/* ---------- offline productivity ---------- */
+export const saveCapture = (text: string, id: string = uid()) => persist(async () => {
+  if (!text.trim()) throw new Error("Enter a note or link.");
+  const existing = await db.inbox.get(id);
+  await db.inbox.put({ id, text: text.trim(), createdAt: existing?.createdAt ?? now() });
+  return id;
+});
+export const deleteCapture = (id: string) => persist(() => db.inbox.delete(id));
+export const moveCapture = (id: string, sectionId: string) => persist(() => db.transaction("rw", db.inbox, db.sections, async () => {
+  const item = await db.inbox.get(id), section = await db.sections.get(sectionId);
+  if (!item || !section) throw new Error("Capture or destination no longer exists.");
+  const card = newCard("richtext");
+  if (card.type !== "richtext") throw new Error("Invalid capture type");
+  card.title = "Captured note";
+  card.doc = { type: "doc", content: item.text.split("\n").map((text) => ({ type: "paragraph", content: text ? [{ type: "text", text }] : [] })) };
+  await db.sections.update(sectionId, { cards: [...section.cards, card] });
+  await db.inbox.delete(id);
+  return card.id;
+}));
+export const deleteCard = (sectionId: string, cardId: string) => persist(() => db.transaction("rw", db.sections, db.trash, async () => {
+  const section = await db.sections.get(sectionId);
+  const index = section?.cards.findIndex((c) => c.id === cardId) ?? -1;
+  const card = section?.cards[index];
+  if (!section || !card) throw new Error("Card not found");
+  await db.trash.add({ id: uid(), type: "card", card, sectionId, projectId: section.projectId, index, deletedAt: now() });
+  await db.sections.update(sectionId, { cards: section.cards.filter((c) => c.id !== cardId) });
+}));
+export const toggleFavorite = (type: ItemReference["type"], targetId: string) => persist(async () => {
+  const id = `favorite:${type}:${targetId}`;
+  if (await db.references.get(id)) await db.references.delete(id);
+  else await db.references.put({ id, kind: "favorite", type, targetId, accessedAt: now() });
+});
+export const recordRecent = (type: ItemReference["type"], targetId: string) => persist(() => db.references.put({ id: `recent:${type}:${targetId}`, kind: "recent", type, targetId, accessedAt: now() }));
+export const permanentlyDelete = (id: string) => persist(() => db.transaction("rw", db.trash, db.references, async () => {
+  const item = await db.trash.get(id);
+  if (!item) return;
+  const ids = item.type === "project" ? [item.project.id, ...item.sections.flatMap((s) => [s.id, ...s.cards.flatMap((c) => c.type === "composite" ? [c.id, ...c.children.map((ch) => ch.id)] : [c.id])])] : item.type === "section" ? [item.section.id, ...item.section.cards.flatMap((c) => c.type === "composite" ? [c.id, ...c.children.map((ch) => ch.id)] : [c.id])] : [item.card.id, ...(item.card.type === "composite" ? item.card.children.map((c) => c.id) : [])];
+  await db.references.where("targetId").anyOf(ids).delete();
+  await db.trash.delete(id);
+}));
+export const restoreTrash = (id: string) => persist(() => db.transaction("rw", db.projects, db.sections, db.trash, async () => {
+  const item = await db.trash.get(id);
+  if (!item) throw new Error("Trash item not found");
+  async function parent(projectId: string) {
+    const existing = await db.projects.get(projectId);
+    if (existing) return existing.id;
+    const recovered = (await db.projects.toArray()).find((p) => p.name === "Recovered items");
+    if (recovered) return recovered.id;
+    const pid = uid();
+    await db.projects.add({ id: pid, name: "Recovered items", category: "general", order: await nextOrder("projects"), archived: false, createdAt: now(), updatedAt: now() });
+    return pid;
+  }
+  if (item.type === "project") {
+    if (await db.projects.get(item.project.id)) throw new Error("A project with this identifier already exists.");
+    await db.projects.add(item.project);
+    await db.sections.bulkAdd(item.sections);
+  } else if (item.type === "section") {
+    await db.sections.add({ ...item.section, projectId: await parent(item.section.projectId) });
+  } else {
+    let section = await db.sections.get(item.sectionId);
+    if (!section) {
+      const projectId = await parent(item.projectId);
+      section = { id: uid(), projectId, title: "Recovered cards", description: "", order: await nextOrder("sections", projectId), cards: [] };
+      await db.sections.add(section);
+    }
+    const cards = [...section.cards];
+    cards.splice(Math.min(item.index, cards.length), 0, item.card);
+    await db.sections.update(section.id, { cards });
+  }
+  await db.trash.delete(id);
+}));

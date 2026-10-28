@@ -2,7 +2,8 @@ import JSZip from "jszip";
 import { db } from "./db";
 import { cloneCard, collectAttachmentIds, uid } from "./cards";
 import { sanitizeDoc } from "./url";
-import { SCHEMA_VERSION, type Card, type Project, type Section, type Template } from "./types";
+import { SCHEMA_VERSION, type Card, type Project, type Section, type Template, type InboxItem, type ItemReference, type TrashItem } from "./types";
+import { persist } from "./status";
 
 export interface Manifest {
   app: "omnivault";
@@ -11,6 +12,9 @@ export interface Manifest {
   projects: Project[];
   sections: Section[];
   templates: Template[];
+  inbox?: InboxItem[];
+  references?: ItemReference[];
+  trash?: TrashItem[];
   attachments: { id: string; name: string; mime: string; size: number }[];
 }
 
@@ -28,8 +32,9 @@ const templateCards = (t: Template): Card[] =>
   t.level === "card" ? [t.card] : t.level === "section" ? t.section.cards : t.sections.flatMap((s) => s.cards);
 
 export async function exportBackup(): Promise<Blob> {
-  const [projects, sections, templates] = await Promise.all([db.projects.toArray(), db.sections.toArray(), db.templates.toArray()]);
-  const used = new Set([...sections.flatMap((s) => collectAttachmentIds(s.cards)), ...templates.flatMap((t) => collectAttachmentIds(templateCards(t)))]);
+  const [projects, sections, templates, inbox, references, trash] = await Promise.all([db.projects.toArray(), db.sections.toArray(), db.templates.toArray(), db.inbox.toArray(), db.references.toArray(), db.trash.toArray()]);
+  const trashCards = (t: TrashItem) => t.type === "project" ? t.sections.flatMap((s) => s.cards) : t.type === "section" ? t.section.cards : [t.card];
+  const used = new Set([...sections.flatMap((s) => collectAttachmentIds(s.cards)), ...templates.flatMap((t) => collectAttachmentIds(templateCards(t))), ...trash.flatMap((t) => collectAttachmentIds(trashCards(t)))]);
   const atts = (await db.attachments.bulkGet([...used])).filter((a): a is NonNullable<typeof a> => !!a);
   const zip = new JSZip();
   const manifest: Manifest = {
@@ -39,6 +44,8 @@ export async function exportBackup(): Promise<Blob> {
     projects,
     sections: sections.map((s) => ({ ...s, cards: scrubCards(s.cards) })),
     templates: templates.map(scrubTemplate),
+    inbox, references,
+    trash: trash.map((t) => t.type === "project" ? { ...t, sections: t.sections.map((s) => ({ ...s, cards: scrubCards(s.cards) })) } : t.type === "section" ? { ...t, section: { ...t.section, cards: scrubCards(t.section.cards) } } : { ...t, card: scrubCards([t.card])[0] ?? t.card }),
     attachments: atts.map(({ id, name, mime, size }) => ({ id, name, mime, size })),
   };
   zip.file("manifest.json", JSON.stringify(manifest, null, 2));
@@ -60,6 +67,9 @@ export function validateManifest(m: unknown): Manifest {
   for (const k of ["projects", "sections", "templates", "attachments"] as const)
     if (!Array.isArray(x[k])) throw new Error(`Backup is missing "${k}".`);
   for (const s of x.sections) if (typeof s.id !== "string" || !Array.isArray(s.cards)) throw new Error("A section in the backup is malformed.");
+  for (const k of ["inbox", "references", "trash"] as const) if (x[k] !== undefined && !Array.isArray(x[k])) throw new Error(`Backup has invalid "${k}".`);
+  for (const i of x.inbox ?? []) if (typeof i.text !== "string" || typeof i.id !== "string") throw new Error("Invalid Inbox item.");
+  for (const t of x.trash ?? []) if (!["project", "section", "card"].includes(t.type) || typeof t.id !== "string") throw new Error("Invalid Trash item.");
   return x;
 }
 
@@ -84,26 +94,33 @@ export async function importBackup(file: Blob): Promise<number> {
   const blobs: { id: string; name: string; mime: string; size: number; blob: Blob }[] = [];
   for (const a of m.attachments) {
     const f = zip.file(`files/${a.id}`);
-    if (!f) continue;
+    if (!f) throw new Error(`Backup is missing attachment: ${a.name}`);
     const blob = new Blob([await f.async("arraybuffer")], { type: a.mime });
     const nid = uid();
     attMap[a.id] = nid;
     blobs.push({ id: nid, name: a.name, mime: a.mime, size: blob.size, blob });
   }
-  const fix = (cards: Card[]) => scrubCards(cards.map((c) => cloneCard(c, { attachmentMap: attMap })));
+  const idMap: Record<string, string> = {};
+  const mappedId = (id: string): string => idMap[id] ?? (idMap[id] = uid());
+  const fix = (cards: Card[]) => scrubCards(cards.map((c) => {
+    const next = cloneCard(c, { attachmentMap: attMap });
+    next.id = mappedId(c.id);
+    if (c.type === "composite" && next.type === "composite") next.children.forEach((ch, i) => { const old = c.children[i]; if (old) ch.id = mappedId(old.id); });
+    return next;
+  }));
   const base = (await db.projects.count()) || 0;
-  await db.transaction("rw", db.projects, db.sections, db.templates, db.attachments, async () => {
+  await persist(() => db.transaction("rw", [db.projects, db.sections, db.templates, db.attachments, db.inbox, db.references, db.trash], async () => {
     for (const b of blobs) await db.attachments.add({ ...b, createdAt: Date.now() });
     const pMap: Record<string, string> = {};
     for (const [i, p] of m.projects.entries()) {
-      const npid = uid();
+      const npid = mappedId(p.id);
       pMap[p.id] = npid;
       await db.projects.add({ ...p, id: npid, order: base + i });
     }
     for (const s of m.sections) {
       const pid = pMap[s.projectId];
       if (!pid) continue;
-      await db.sections.add({ ...s, id: uid(), projectId: pid, cards: fix(s.cards) });
+      await db.sections.add({ ...s, id: mappedId(s.id), projectId: pid, cards: fix(s.cards) });
     }
     for (const t of m.templates) {
       const id = uid();
@@ -111,6 +128,17 @@ export async function importBackup(file: Blob): Promise<number> {
       else if (t.level === "section") await db.templates.add({ ...t, id, section: { ...t.section, cards: fix(t.section.cards) } });
       else await db.templates.add({ ...t, id, sections: t.sections.map((s) => ({ ...s, cards: fix(s.cards) })) });
     }
-  });
+    for (const i of m.inbox ?? []) await db.inbox.add({ ...i, id: uid() });
+    for (const t of m.trash ?? []) {
+      const section = (s: Section) => ({ ...s, id: mappedId(s.id), projectId: mappedId(s.projectId), cards: fix(s.cards) });
+      if (t.type === "project") await db.trash.add({ ...t, id: uid(), project: { ...t.project, id: mappedId(t.project.id) }, sections: t.sections.map(section) });
+      else if (t.type === "section") await db.trash.add({ ...t, id: uid(), section: section(t.section) });
+      else { const card = fix([t.card])[0]; if (card) await db.trash.add({ ...t, id: uid(), card, sectionId: mappedId(t.sectionId), projectId: mappedId(t.projectId) }); }
+    }
+    for (const r of m.references ?? []) {
+      const targetId = idMap[r.targetId];
+      if (targetId && ["favorite", "recent"].includes(r.kind) && ["project", "section", "card"].includes(r.type)) await db.references.put({ ...r, targetId, id: `${r.kind}:${r.type}:${targetId}` });
+    }
+  }));
   return m.projects.length;
 }

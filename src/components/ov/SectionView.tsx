@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
-import { ChevronDown, Combine, LayoutTemplate, Plus, Trash2, X } from "lucide-react";
+import { ChevronDown, Combine, LayoutTemplate, Plus, Trash2, X, Star } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -8,14 +8,14 @@ import { Textarea } from "@/components/ui/textarea";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { db } from "@/lib/ov/db";
 import { CARD_TYPES, move, newCard, stitch, ungroup } from "@/lib/ov/cards";
-import { deleteTemplate, duplicateCard, insertCardTemplate, mutateCards, saveCardTemplate, updateCard, updateSection } from "@/lib/ov/repo";
+import { deleteTemplate, duplicateCard, insertCardTemplate, mutateCards, saveCardTemplate, updateCard, updateSection, deleteCard, toggleFavorite } from "@/lib/ov/repo";
 import type { Section, Template } from "@/lib/ov/types";
 import { CardView } from "./CardView";
 import { useDialogs } from "./dialogs";
 
 const err = (e: unknown) => toast.error(e instanceof Error ? e.message : "Something went wrong.");
 
-export function SectionView({ section }: { section: Section }) {
+export function SectionView({ section, focusCard }: { section: Section; focusCard?: string | null }) {
   const { prompt, confirm } = useDialogs();
   const [selecting, setSelecting] = useState(false);
   const [sel, setSel] = useState<string[]>([]);
@@ -24,6 +24,9 @@ export function SectionView({ section }: { section: Section }) {
   useEffect(() => { setTitle(section.title); setDesc(section.description); setSel([]); setSelecting(false); }, [section.id]);
   const cardTemplates = useLiveQuery(() => db.templates.where("level").equals("card").toArray(), []) as Extract<Template, { level: "card" }>[] | undefined;
   const id = section.id;
+  const [tag, setTag] = useState("all");
+  const tags = [...new Set(section.cards.flatMap((c) => c.tags ?? []))].sort();
+  const favorites = useLiveQuery(() => db.references.where("kind").equals("favorite").toArray(), []) ?? [];
 
   async function doStitch() {
     try {
@@ -55,6 +58,8 @@ export function SectionView({ section }: { section: Section }) {
       />
 
       <div className="mt-4 flex flex-wrap items-center gap-2">
+        <Button size="icon" variant="ghost" aria-label="Favorite section" title="Favorite section" aria-pressed={favorites.some((f) => f.targetId === id)} onClick={() => toggleFavorite("section", id).catch(err)}><Star className={`size-4 ${favorites.some((f) => f.targetId === id) ? "fill-current text-primary" : ""}`} /></Button>
+        {tags.length > 0 && <label className="text-sm text-muted-foreground">Tag <select aria-label="Filter cards by tag" className="max-w-32 rounded border border-input bg-background px-2 py-1 text-foreground" value={tag} onChange={(e) => setTag(e.target.value)}><option value="all">All tags</option>{tags.map((t) => <option key={t}>{t}</option>)}</select></label>}
         <DropdownMenu>
           <DropdownMenuTrigger asChild><Button size="sm"><Plus className="size-4" />Add card<ChevronDown className="size-3.5" /></Button></DropdownMenuTrigger>
           <DropdownMenuContent align="start">
@@ -90,10 +95,11 @@ export function SectionView({ section }: { section: Section }) {
 
       <div className="mt-2">
         {section.cards.length === 0 && <p className="py-12 text-center text-sm text-muted-foreground">This section is empty. Add a card to begin.</p>}
-        {section.cards.map((card, i) => (
+        {section.cards.map((card, i) => tag !== "all" && !card.tags?.includes(tag) && card.id !== focusCard ? null : (
           <CardView
             key={card.id}
             card={card}
+            highlighted={focusCard === card.id}
             index={i}
             count={section.cards.length}
             selecting={selecting}
@@ -104,8 +110,8 @@ export function SectionView({ section }: { section: Section }) {
               onDuplicate: () => duplicateCard(id, card).catch(err),
               onMove: (d) => mutateCards(id, (cs) => move(cs, cs.findIndex((x) => x.id === card.id), d)).catch(err),
               onDelete: async () => {
-                if (await confirm({ title: "Delete card?", body: `"${card.title || "Untitled"}" will be permanently deleted.`, destructive: true, confirm: "Delete" }))
-                  mutateCards(id, (cs) => cs.filter((x) => x.id !== card.id)).catch(err);
+                if (await confirm({ title: "Move card to Trash?", body: `"${card.title || "Untitled"}" can be restored from Trash.`, destructive: true, confirm: "Move to Trash" }))
+                  deleteCard(id, card.id).catch(err);
               },
               onSaveTemplate: async () => {
                 const name = await prompt({ title: "Save card template", label: "Template name", initial: card.title });
