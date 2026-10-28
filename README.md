@@ -246,72 +246,27 @@ Do not execute arbitrary remote page code or allow embeds to access the vault.
 
 ## 10. SECURE SECRETS VAULT
 
-The Secrets Vault is a distinct security boundary, not an ordinary card or project field.
+The Secrets Vault is local, works offline, and is a distinct security boundary from ordinary project data. It requires no account, server, network connection, or authenticator sign-in. The master password is used only on the device and is never stored or transmitted.
 
-The Secrets Vault Reference card only opens or references a protected collection. Actual secret values must never be stored inside ordinary project records, templates, card JSON, or workspace exports.
+The Secrets Vault Reference card stores only a harmless collection label and opens that collection. Actual secret values must never be stored inside ordinary project records, templates, card JSON, or workspace exports.
 
-The vault may store credential records containing a name, username or identifier, secret value, optional URL, notes, and tags. Mask secret values by default, with explicit reveal and copy controls.
+Credential records may contain a collection, name, username or identifier, secret value, optional URL, notes, and tags. Encrypt the complete payload, including the name and collection. Mask secrets by default and provide explicit reveal, copy, edit, and delete controls.
 
-### Authentication and genuine two-step verification
+### Master password and encryption
 
-Use Lovable Cloud's supported authentication capabilities and actual authenticator-app TOTP MFA, backed by Supabase Auth where provided by Lovable Cloud.
+Require a master password of at least 12 characters and confirmation during initial setup. Explain before setup that a forgotten password cannot be reset and the encrypted vault will be unrecoverable.
 
-Implement:
-- Account enrollment and sign-in when the vault is first used.
-- Authenticator enrollment with QR code and manual setup fallback.
-- Verification before marking MFA enrollment complete.
-- A real TOTP challenge during login or vault access.
-- Session verification using the provider's MFA assurance level.
-- Vault lock, inactivity timeout, and explicit re-verification.
-- Protected settings for viewing and managing the enrolled factor.
+Use the Web Crypto API with AES-256-GCM. Generate a random 256-bit data-encryption key and a unique 96-bit nonce for every encryption operation. Derive a wrapping key from the master password using PBKDF2-HMAC-SHA-256 with a random 128-bit salt and 600,000 iterations. Use it to encrypt the random data key. Store only the salt, KDF parameters, nonce, and wrapped key envelope needed to unlock the vault.
 
-Do not implement a fake MFA dialog, hardcoded codes, mock verification, or a frontend-only flag. A normal authenticated session must not be treated as an MFA-verified session.
+Store encrypted credential payloads in a dedicated local database separate from ordinary workspace data. Include versioned associated data so ciphertext cannot be moved between records undetected. Never store plaintext credential payloads, master passwords, or the unlocked key in persistent storage. Keep the non-extractable data key in memory only; clear it when the user locks the vault, closes it, the app is hidden, or five minutes of inactivity passes.
 
-### Client-side encryption
+### Local storage and recovery
 
-Encrypt all secret record content in the client before persistence.
+All encryption and decryption happen on the device. Do not add account authentication, TOTP/MFA, server key shares, remote vault storage, or a recovery bypass. Never log secrets, passwords, decrypted payloads, or key material.
 
-Use AES-256-GCM authenticated encryption through Web Crypto or a maintained library. Generate a cryptographically secure random data-encryption key, a fresh unique nonce for each encryption operation, and versioned encrypted records.
+The salt, KDF settings, record identifiers, timestamps, nonces, and ciphertext length remain visible in local storage; credential names and values are encrypted. A copied vault database permits offline password guessing, so users should choose a long, unique master password. Do not claim server-side protection or protection against malware running as the same user.
 
-Use a maintained Argon2id implementation for deriving a key-encryption key from a separate vault passphrase, where practical. If unsupported in the selected browser stack, use a defensible Web Crypto PBKDF2-HMAC-SHA-256 fallback with a strong documented work factor. Never invent cryptography.
-
-The vault passphrase must remain client-side and must not be sent to the authentication provider or backend.
-
-### Meaningful MFA enforcement
-
-Do not rely solely on hiding the vault screen after login.
-
-Use a key-access design where the random vault data-encryption key is wrapped using key material derived from both:
-1. The user's vault passphrase.
-2. A protected server-derived key share that is obtainable only after genuine MFA verification.
-
-Store the server-only root secret in Lovable Cloud's server-side secrets, never in frontend code or the database. A server-side function must authenticate the user, verify the actual MFA assurance level is AAL2, and only then derive and return a per-user key share. It must not receive the vault passphrase, plaintext secret values, or plaintext data-encryption key.
-
-Combine the share and passphrase-derived material on the client to unwrap the vault key. Keep unlocked key material in memory only, and clear it when the vault locks or the authenticated session ends.
-
-Never persist the server share in browser storage. Never ship server-only secrets to the client bundle.
-
-### Backend and database security
-
-Use a dedicated vault data model. At minimum, encrypted vault records and the wrapped vault-key envelope must be separate from ordinary project data.
-
-Store only encrypted secret payloads plus necessary metadata and versioned encryption parameters. Encrypt secret names and values together to minimize metadata leakage.
-
-Apply row-level security so a user can access only their own vault records. Enforce the MFA assurance requirement at the database and protected server-function layers, not just in the UI.
-
-Use server-side rate limits and the authentication provider's supported protections. Never log secret values, master passphrases, TOTP codes, recovery credentials, decrypted payloads, or key material.
-
-All errors must fail closed. Tampered ciphertext, incorrect credentials, or missing key material must prevent decryption.
-
-### Security honesty and recovery
-
-Do not claim the vault is production-ready until encryption, actual MFA, row-level security, key release, and negative-path tests pass.
-
-Document the limitations of browser-based apps and the chosen key-sharing architecture.
-
-If no secure recovery mechanism is implemented, clearly explain that losing the vault passphrase or required recovery capability may make encrypted data unrecoverable. Do not add a silent bypass around MFA to make recovery easier.
-
-If the authentication backend or server-side configuration is unavailable, identify the exact setup required. Do not replace the missing integration with mocked verification or plaintext storage.
+Workspace backups must never include vault records, plaintext keys, or the master password. Encrypted vault export/recovery is not provided. Losing the master password or deleting the local vault database makes the credentials unrecoverable. Incorrect passwords and tampered ciphertext must fail closed.
 
 ## 11. PERSISTENCE AND BACKUP
 
@@ -332,7 +287,7 @@ Ordinary exports must never include actual Secrets values, plaintext keys, or va
 
 Provide a compact settings area for theme, basic workspace preferences, backup/import/export actions, and Secrets Vault access.
 
-Use responsive dialogs for creating projects and sections, naming templates, confirming deletion, and managing vault authentication.
+Use responsive dialogs for creating projects and sections, naming templates, confirming deletion, and managing the local master-password vault.
 
 Use clear empty states, inline errors, accessible focus states, and meaningful feedback after successful actions. Avoid browser prompts when a consistent, accessible in-app dialog is straightforward.
 

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
-import { ArrowDown, ArrowUp, Download, ExternalLink, Expand, KeyRound, Plus, Trash2, Upload, X, FileText } from "lucide-react";
+import { ArrowDown, ArrowUp, ClipboardCopy, Download, ExternalLink, Expand, Eye, EyeOff, Plus, Trash2, Upload, X, FileText } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -8,11 +8,13 @@ import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { db } from "@/lib/ov/db";
 import { addAttachment } from "@/lib/ov/repo";
 import { move, uid } from "@/lib/ov/cards";
 import { safeUrl, youtubeEmbed } from "@/lib/ov/url";
+import { hasCardSecret, hasVault, isVaultUnlocked, lockVault, readCardSecret, unlockVault } from "@/lib/ov/vault";
+import { initializeSecretsVault, saveSecretForCard } from "@/lib/ov/repo";
 import type { ChecklistCard, ChoiceCard, FileCard, ImageCard, LinkCard, VaultRefCard } from "@/lib/ov/types";
 
 type P<T> = { card: T; editing: boolean; onChange: (c: T) => void };
@@ -279,19 +281,178 @@ export function LinkBody({ card, editing, onChange }: P<LinkCard>) {
 }
 
 /* ---------- Vault reference ---------- */
-export function VaultRefBody({ card, editing, onChange }: P<VaultRefCard>) {
+export function VaultRefBody({ card, editing, onChange, onFinishEditing }: P<VaultRefCard> & { onFinishEditing?: (() => void) | undefined }) {
+  const [identifier, setIdentifier] = useState(card.identifier ?? "");
+  const [note, setNote] = useState(card.note ?? "");
+  const [secretDraft, setSecretDraft] = useState("");
+  const [hasSecret, setHasSecret] = useState(false);
+  const [revealed, setRevealed] = useState("");
+  const [dialog, setDialog] = useState<"setup" | "verify" | null>(null);
+  const [dialogPassword, setDialogPassword] = useState("");
+  const [confirmation, setConfirmation] = useState("");
+  const [dialogError, setDialogError] = useState("");
+  const [pendingAction, setPendingAction] = useState<"reveal" | "copy" | "save" | null>(null);
+  const [busy, setBusy] = useState(false);
+  const timeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    setIdentifier(card.identifier ?? "");
+    setNote(card.note ?? "");
+    setSecretDraft("");
+    setRevealed("");
+    hasCardSecret(card.id).then(setHasSecret).catch((e) => toast.error((e as Error).message));
+  }, [card.id, card.identifier, card.note]);
+  useEffect(() => {
+    if (!editing) return;
+    let active = true;
+    hasVault().then((exists) => { if (active && !exists) setDialog("setup"); }).catch((e) => toast.error((e as Error).message));
+    return () => { active = false; };
+  }, [editing]);
+  useEffect(() => {
+    const hide = () => {
+      setRevealed("");
+      lockVault();
+    };
+    const visibility = () => { if (document.visibilityState === "hidden") hide(); };
+    window.addEventListener("pagehide", hide);
+    document.addEventListener("visibilitychange", visibility);
+    return () => {
+      window.removeEventListener("pagehide", hide);
+      document.removeEventListener("visibilitychange", visibility);
+      if (timeout.current) clearTimeout(timeout.current);
+      lockVault();
+    };
+  }, []);
+
+  async function save() {
+    setBusy(true);
+    try {
+      const alreadyStored = await hasCardSecret(card.id);
+      setHasSecret(alreadyStored);
+      if (secretDraft) {
+        if (!isVaultUnlocked()) {
+          setPendingAction("save");
+          setDialogPassword("");
+          setDialogError("");
+          setDialog("verify");
+          return;
+        }
+        await saveSecretForCard(card.id, secretDraft);
+        lockVault();
+        setHasSecret(true);
+      } else if (!alreadyStored) {
+        throw new Error("Enter a secret before saving this card.");
+      }
+      onChange({ ...card, identifier: identifier.trim(), note });
+      setSecretDraft("");
+      lockVault();
+      onFinishEditing?.();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not save this secret.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function request(action: "reveal" | "copy") {
+    setPendingAction(action);
+    setDialogPassword("");
+    setDialogError("");
+    setDialog("verify");
+  }
+
+  async function verifyAndContinue(event: React.FormEvent) {
+    event.preventDefault();
+    setBusy(true);
+    setDialogError("");
+    let plaintext = "";
+    try {
+      if (dialog === "setup") {
+        if (dialogPassword.length < 12) throw new Error("Use at least 12 characters for the master password.");
+        if (dialogPassword !== confirmation) throw new Error("The passwords do not match.");
+        await initializeSecretsVault(dialogPassword);
+        setDialog(null);
+        setDialogPassword("");
+        setConfirmation("");
+        return;
+      }
+      await unlockVault(dialogPassword);
+      if (pendingAction === "save") {
+        await saveSecretForCard(card.id, secretDraft);
+        setHasSecret(true);
+        onChange({ ...card, identifier: identifier.trim(), note });
+        setSecretDraft("");
+        onFinishEditing?.();
+      } else if (pendingAction) {
+        plaintext = await readCardSecret(card.id);
+        if (pendingAction === "reveal") {
+          setRevealed(plaintext);
+          if (timeout.current) clearTimeout(timeout.current);
+          timeout.current = setTimeout(() => setRevealed(""), 30_000);
+        } else {
+          await navigator.clipboard.writeText(plaintext);
+          toast.success("Secret copied");
+        }
+      }
+      setDialog(null);
+      setDialogPassword("");
+      lockVault();
+      setPendingAction(null);
+    } catch (e) {
+      lockVault();
+      setDialogError(e instanceof Error ? e.message : "Could not verify or access the secret.");
+    } finally {
+      plaintext = "";
+      setBusy(false);
+    }
+  }
+
+  function cancelEdit() {
+    setIdentifier(card.identifier ?? "");
+    setNote(card.note ?? "");
+    setSecretDraft("");
+    setDialog(null);
+    setPendingAction(null);
+    onFinishEditing?.();
+  }
+
   return (
-    <div className="space-y-2 text-sm">
+    <div className="space-y-3 text-sm">
       {editing ? (
-        <label className="block space-y-1"><span className="text-muted-foreground">Vault collection</span>
-          <Input value={card.collection} onChange={(e) => onChange({ ...card, collection: e.target.value })} className="h-8" />
-        </label>
+        <form className="space-y-3" onSubmit={(e) => { e.preventDefault(); void save(); }}>
+          <label className="block space-y-1"><span className="text-muted-foreground">Identifier</span><Input autoFocus value={identifier} onChange={(e) => setIdentifier(e.target.value)} aria-label="Secret identifier" className="h-8" /></label>
+          <label className="block space-y-1"><span className="text-muted-foreground">Secret</span><Input type="password" autoComplete="new-password" value={secretDraft} onChange={(e) => setSecretDraft(e.target.value)} aria-label="Secret value" className="h-8" />{hasSecret && <span className="text-xs text-muted-foreground">Leave empty to keep the current encrypted secret.</span>}</label>
+          <label className="block space-y-1"><span className="text-muted-foreground">Note</span><Textarea value={note} onChange={(e) => setNote(e.target.value)} aria-label="Secret note" rows={3} /></label>
+          <div className="flex gap-2"><Button size="sm" type="submit" disabled={busy}>{busy ? "Saving…" : "Save"}</Button><Button size="sm" type="button" variant="ghost" onClick={cancelEdit}>Cancel</Button></div>
+        </form>
       ) : (
-        <div className="flex items-center gap-2"><KeyRound className="size-4 text-primary" />Collection: <span className="font-medium">{card.collection}</span></div>
+        <div className="space-y-2">
+          <div><p className="text-xs text-muted-foreground">Identifier</p><p className="font-medium">{card.identifier || "—"}</p></div>
+          <div><p className="text-xs text-muted-foreground">Secret</p><div className="flex items-center gap-1"><code className="min-w-0 flex-1 truncate font-mono">{revealed || (hasSecret ? "••••••••" : "No secret saved")}</code>{hasSecret && <><Button size="icon" variant="ghost" className="size-8" aria-label={revealed ? "Hide secret" : "Reveal secret"} onClick={() => revealed ? (setRevealed(""), timeout.current && clearTimeout(timeout.current)) : request("reveal")}>{revealed ? <EyeOff className="size-4" /> : <Eye className="size-4" />}</Button><Button size="icon" variant="ghost" className="size-8" aria-label="Copy secret" onClick={() => request("copy")}><ClipboardCopy className="size-4" /></Button></>}</div></div>
+          {card.note && <div><p className="text-xs text-muted-foreground">Note</p><p className="whitespace-pre-wrap">{card.note}</p></div>}
+        </div>
       )}
-      <p className="text-muted-foreground">
-        This card only points to a vault collection — secret values are never stored here. The encrypted Secrets Vault with authenticator sign-in isn't available yet in this version.
-      </p>
+      <Dialog open={dialog === "setup"} onOpenChange={(open) => { if (!open) { setDialog(null); setDialogPassword(""); setConfirmation(""); } }}>
+        <DialogContent className="sm:max-w-sm">
+          <form className="space-y-4" onSubmit={(e) => void verifyAndContinue(e)}>
+            <DialogHeader><DialogTitle>Create your master password</DialogTitle><DialogDescription>This one password protects every Secret card on this device. Losing it may permanently prevent recovery; no recovery key is available.</DialogDescription></DialogHeader>
+            <label className="block space-y-1 text-sm"><span>Master password (12+ characters)</span><Input type="password" autoComplete="new-password" value={dialogPassword} onChange={(e) => setDialogPassword(e.target.value)} /></label>
+            <label className="block space-y-1 text-sm"><span>Confirm master password</span><Input type="password" autoComplete="new-password" value={confirmation} onChange={(e) => setConfirmation(e.target.value)} /></label>
+            {dialogError && <p role="alert" className="text-sm text-destructive">{dialogError}</p>}
+            <DialogFooter><Button type="submit" disabled={busy}>{busy ? "Creating…" : "Create vault"}</Button></DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={dialog === "verify"} onOpenChange={(open) => { if (!open) { setDialog(null); setDialogPassword(""); setPendingAction(null); } }}>
+        <DialogContent className="sm:max-w-sm">
+          <form className="space-y-4" onSubmit={(e) => void verifyAndContinue(e)}>
+            <DialogHeader><DialogTitle>Verify master password</DialogTitle><DialogDescription>{pendingAction === "copy" ? "Verify to copy this secret to the clipboard." : pendingAction === "reveal" ? "Verify to reveal this secret for up to 30 seconds." : "Verify to encrypt the replacement secret."}</DialogDescription></DialogHeader>
+            <label className="block space-y-1 text-sm"><span>Master password</span><Input autoFocus type="password" autoComplete="current-password" value={dialogPassword} onChange={(e) => setDialogPassword(e.target.value)} /></label>
+            {dialogError && <p role="alert" className="text-sm text-destructive">{dialogError}</p>}
+            <DialogFooter><Button type="submit" disabled={busy || !dialogPassword}>{busy ? "Verifying…" : "Verify"}</Button></DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

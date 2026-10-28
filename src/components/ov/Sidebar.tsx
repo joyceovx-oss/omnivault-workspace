@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
-import { Archive, ArchiveRestore, ArrowDown, ArrowUp, Copy, FileStack, MoreHorizontal, PanelLeftClose, PanelLeftOpen, Pencil, Plus, Save, Trash2 } from "lucide-react";
+import { Archive, ArchiveRestore, ArrowDown, ArrowUp, Copy, FileStack, MoreHorizontal, PanelLeftClose, PanelLeftOpen, Pencil, Plus, Save, Star, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -12,7 +12,7 @@ import { db } from "@/lib/ov/db";
 import { move } from "@/lib/ov/cards";
 import { STARTERS } from "@/lib/ov/starters";
 import {
-  createProject, createSection, deleteProject, deleteSection, deleteTemplate, duplicateProject, duplicateSection,
+  createProject, createSection, deleteProject, deleteSection, deleteTemplate, duplicateProject, duplicateSection, toggleFavorite,
   reorder, saveProjectTemplate, saveSectionTemplate, updateProject, updateSection,
 } from "@/lib/ov/repo";
 import { CATEGORIES, type Category, type Project, type Section, type Template } from "@/lib/ov/types";
@@ -37,10 +37,12 @@ export function Sidebar({ projectId, sectionId, onSelectProject, onSelectSection
   const [showArchived, setShowArchived] = useState(false);
   const [newOpen, setNewOpen] = useState(false);
   const projects = useLiveQuery(() => db.projects.orderBy("order").toArray(), []) ?? [];
+  const favoriteRefs = useLiveQuery(() => db.references.where("kind").equals("favorite").toArray(), []) ?? [];
   const sections = useLiveQuery(() => (projectId ? db.sections.where("projectId").equals(projectId).sortBy("order") : Promise.resolve([] as Section[])), [projectId]) ?? [];
   const sectionTpls = (useLiveQuery(() => db.templates.where("level").equals("section").toArray(), []) ?? []) as Extract<Template, { level: "section" }>[];
   const active = projects.filter((p) => !p.archived);
   const archived = projects.filter((p) => p.archived);
+  const favoriteIds = new Set(favoriteRefs.map((ref) => `${ref.type}:${ref.targetId}`));
 
   const projectMenu = (p: Project, list: Project[], i: number) => (
     <DropdownMenu>
@@ -75,6 +77,7 @@ export function Sidebar({ projectId, sectionId, onSelectProject, onSelectSection
         className={cn("min-h-9 flex-1 truncate rounded-md px-2.5 text-left text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
           projectId === p.id ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground" : "hover:bg-sidebar-accent/60")}
       >{p.name}</button>
+      <Button size="icon" variant="ghost" className="size-7 shrink-0" aria-label={`${favoriteIds.has(`project:${p.id}`) ? "Unfavorite" : "Favorite"} project ${p.name}`} aria-pressed={favoriteIds.has(`project:${p.id}`)} onClick={() => toggleFavorite("project", p.id).catch(err)}><Star className={`size-3.5 ${favoriteIds.has(`project:${p.id}`) ? "fill-current text-primary" : ""}`} /></Button>
       {projectMenu(p, list, i)}
     </li>
   );
@@ -155,6 +158,7 @@ export function Sidebar({ projectId, sectionId, onSelectProject, onSelectSection
                   className={cn("min-h-9 flex-1 truncate rounded-md border-l-2 px-2.5 text-left text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                     sectionId === s.id ? "border-primary bg-background font-medium" : "border-transparent text-muted-foreground hover:text-foreground")}
                 >{s.title || "Untitled"}</button>
+                <Button size="icon" variant="ghost" className="size-7 shrink-0" aria-label={`${favoriteIds.has(`section:${s.id}`) ? "Unfavorite" : "Favorite"} section ${s.title}`} aria-pressed={favoriteIds.has(`section:${s.id}`)} onClick={() => toggleFavorite("section", s.id).catch(err)}><Star className={`size-3.5 ${favoriteIds.has(`section:${s.id}`) ? "fill-current text-primary" : ""}`} /></Button>
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild><Button size="icon" variant="ghost" className="size-7" aria-label={`Actions for ${s.title}`}><MoreHorizontal className="size-4" /></Button></DropdownMenuTrigger>
                   <DropdownMenuContent align="end">
