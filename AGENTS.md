@@ -15,3 +15,5 @@
 - Pure card logic (clone with fresh ids, stitch/ungroup, reorder) lives in `src/lib/ov/cards.ts` and is unit-tested in `src/test/ov-core.test.ts`. Why: these rules must never lose or share data.
 - Cloning anything into/out of templates copies attachment records and resets checklists. Why: instances stay independent from their source.
 - Secret values must never be stored in workspace records, templates or backups; the vault-reference card holds only a collection label. Why: the Secrets Vault is a separate security boundary.
+- Offline productivity uses the existing Dexie database with dedicated Inbox, Trash and reference tables; favorites and recents resolve current records, and search is derived from live data. Why: migrations preserve workspace data and no index or duplicated navigation state can go stale.
+- Trash removal and recovery use repository transactions; attachments remain stored until independent reference-safe cleanup is available. Why: deleting one item must never remove bytes still used by another item.
