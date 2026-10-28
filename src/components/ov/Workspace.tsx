@@ -15,6 +15,7 @@ import { SectionView } from "./SectionView";
 import { CaptureDialog, SearchDialog, UtilityPanel, type UtilityView } from "./Productivity";
 import { recordRecent, toggleFavorite } from "@/lib/ov/repo";
 import type { SearchResult } from "@/lib/ov/search";
+import { SecretsVault } from "./SecretsVault";
 
 function useTheme() {
   const [dark, setDark] = useState(false);
@@ -47,6 +48,8 @@ function Inner() {
   const [sectionId, setSectionId] = useState<string | null>(null);
   const [navOpen, setNavOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [vaultOpen, setVaultOpen] = useState(false);
+  const [vaultCollection, setVaultCollection] = useState<string | null>(null);
   const [view, setView] = useState<UtilityView | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [captureOpen, setCaptureOpen] = useState(false);
@@ -54,6 +57,16 @@ function Inner() {
   const favorites = useLiveQuery(() => db.references.where("kind").equals("favorite").toArray(), []) ?? [];
   const [collapsed, setCollapsed] = useState(() => typeof window !== "undefined" && localStorage.getItem("ov-sidebar") === "collapsed");
   const [dark, setDark] = useTheme();
+
+  useEffect(() => {
+    const openVault = (event: Event) => {
+      const collection = (event as CustomEvent<{ collection?: string }>).detail?.collection;
+      setVaultCollection(collection?.trim() || null);
+      setVaultOpen(true);
+    };
+    window.addEventListener("ov-open-vault", openVault);
+    return () => window.removeEventListener("ov-open-vault", openVault);
+  }, []);
 
   useEffect(() => { localStorage.setItem("ov-sidebar", collapsed ? "collapsed" : "expanded"); }, [collapsed]);
 
@@ -140,14 +153,15 @@ function Inner() {
           )}
         </main>
       </div>
-      <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} dark={dark} setDark={setDark} />
+      <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} dark={dark} setDark={setDark} onOpenVault={() => { setSettingsOpen(false); setVaultCollection(null); setVaultOpen(true); }} />
+      <SecretsVault open={vaultOpen} onOpenChange={setVaultOpen} initialCollection={vaultCollection} />
       <SearchDialog open={searchOpen} onOpenChange={setSearchOpen} onNavigate={navigateResult} projectId={projectId} sectionId={section?.id} />
       <CaptureDialog open={captureOpen} onOpenChange={setCaptureOpen} />
     </div>
   );
 }
 
-function SettingsDialog({ open, onOpenChange, dark, setDark }: { open: boolean; onOpenChange: (o: boolean) => void; dark: boolean; setDark: (d: boolean) => void }) {
+function SettingsDialog({ open, onOpenChange, dark, setDark, onOpenVault }: { open: boolean; onOpenChange: (o: boolean) => void; dark: boolean; setDark: (d: boolean) => void; onOpenVault: () => void }) {
   const file = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   async function doExport() {
@@ -189,7 +203,8 @@ function SettingsDialog({ open, onOpenChange, dark, setDark }: { open: boolean; 
         </section>
         <section className="space-y-1">
           <h3 className="text-sm font-medium">Secrets Vault</h3>
-          <p className="text-sm text-muted-foreground">The encrypted vault with authenticator-app sign-in is not set up yet in this version.</p>
+          <p className="text-sm text-muted-foreground">Credentials are encrypted locally and protected by a master password. Vault contents are excluded from workspace backups.</p>
+          <Button size="sm" variant="secondary" onClick={onOpenVault}><KeyRound />Open local vault</Button>
         </section>
       </DialogContent>
     </Dialog>

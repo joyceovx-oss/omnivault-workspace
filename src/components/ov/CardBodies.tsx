@@ -287,11 +287,9 @@ export function VaultRefBody({ card, editing, onChange }: P<VaultRefCard>) {
           <Input value={card.collection} onChange={(e) => onChange({ ...card, collection: e.target.value })} className="h-8" />
         </label>
       ) : (
-        <div className="flex items-center gap-2"><KeyRound className="size-4 text-primary" />Collection: <span className="font-medium">{card.collection}</span></div>
+        <div className="flex flex-wrap items-center gap-2"><KeyRound className="size-4 text-primary" />Collection: <span className="font-medium">{card.collection}</span><Button size="sm" variant="secondary" onClick={() => window.dispatchEvent(new CustomEvent("ov-open-vault", { detail: { collection: card.collection } }))}>Open collection</Button></div>
       )}
-      <p className="text-muted-foreground">
-        This card only points to a vault collection — secret values are never stored here. The encrypted Secrets Vault with authenticator sign-in isn't available yet in this version.
-      </p>
+      <p className="text-muted-foreground">Credential values are stored separately and protected by the local master password.</p>
     </div>
   );
 }
