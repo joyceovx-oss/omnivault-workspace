@@ -12,7 +12,45 @@ export const CARD_TYPES: { type: Exclude<CardType, "composite">; label: string }
   { type: "link", label: "Link & media" },
   { type: "vaultref", label: "Secrets vault reference" },
 ];
+/**
+ * Collect tags from regular cards and the children of stitched components.
+ * Duplicate tags are merged without changing the first displayed spelling.
+ */
+export function collectCardTags(cards: Card[]): string[] {
+  const tags = new Map<string, string>();
 
+  for (const card of cards) {
+    for (const tag of card.tags ?? []) {
+      const normalized = tag.trim().toLocaleLowerCase();
+      if (normalized && !tags.has(normalized)) {
+        tags.set(normalized, tag.trim());
+      }
+    }
+
+    if (card.type === "composite") {
+      for (const tag of collectCardTags(card.children)) {
+        const normalized = tag.toLocaleLowerCase();
+        if (!tags.has(normalized)) tags.set(normalized, tag);
+      }
+    }
+  }
+
+  return [...tags.values()].sort((a, b) => a.localeCompare(b));
+}
+
+/** Match a tag on a card or any child inside a stitched component. */
+export function cardHasTag(card: Card, tag: string): boolean {
+  const normalized = tag.trim().toLocaleLowerCase();
+  if (!normalized) return false;
+
+  if ((card.tags ?? []).some((item) => item.trim().toLocaleLowerCase() === normalized)) {
+    return true;
+  }
+
+  return card.type === "composite"
+    ? card.children.some((child) => cardHasTag(child, normalized))
+    : false;
+}
 export function newCard(type: Exclude<CardType, "composite">): LeafCard {
   const id = uid();
   switch (type) {
