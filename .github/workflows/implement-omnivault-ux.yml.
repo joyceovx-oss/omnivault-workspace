@@ -1,0 +1,181 @@
+
+name: Implement OmniVault UX Fixes
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: omnivault-ux-implementation
+  cancel-in-progress: false
+
+jobs:
+  implement:
+    if: github.ref == 'refs/heads/pr/recent-logo-secret-vault-update'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout feature branch
+        uses: actions/checkout@v4
+        with:
+          ref: pr/recent-logo-secret-vault-update
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Implement recursive tag filtering
+        shell: bash
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+
+          path = Path("src/components/ov/SectionView.tsx")
+          source = path.read_text()
+
+          changes = [
+              (
+                  'import { CARD_TYPES, move, newCard, stitch, ungroup } from "@/lib/ov/cards";',
+                  'import { CARD_TYPES, cardHasTag, collectCardTags, move, newCard, stitch, ungroup } from "@/lib/ov/cards";',
+                  "recursive tag helper imports"
+              ),
+              (
+                  '  const tags = [...new Set(section.cards.flatMap((c) => c.tags ?? []))].sort();',
+                  '  const tags = collectCardTags(section.cards);',
+                  "nested tag collection"
+              ),
+              (
+                  '{section.cards.map((card, i) => tag !== "all" && !card.tags?.includes(tag) && card.id !== focusCard ? null : (',
+                  '{section.cards.map((card, i) => tag !== "all" && !cardHasTag(card, tag) && card.id !== focusCard ? null : (',
+                  "nested tag filtering"
+              )
+          ]
+
+          for old, new, label in changes:
+              if new in source:
+                  print(f"Already applied: {label}")
+                  continue
+
+              if source.count(old) != 1:
+                  raise SystemExit(
+                      f"Stopped safely: expected exactly one match for {label}."
+                  )
+
+              source = source.replace(old, new, 1)
+              print(f"Applied: {label}")
+
+          tag_state = '  const [tag, setTag] = useState("all");\n'
+
+          if tag_state not in source:
+              raise SystemExit("Could not find tag state declaration.")
+
+          source = source.replace(tag_state, "", 1)
+
+          state_anchor = '  const [newCardId, setNewCardId] = useState<string | null>(null);\n'
+
+          if tag_state not in source:
+              if state_anchor not in source:
+                  raise SystemExit("Could not find SectionView state insertion point.")
+              source = source.replace(state_anchor, state_anchor + tag_state, 1)
+
+          old_effect = (
+              '  useEffect(() => { setTitle(section.title); setDesc(section.description); '
+              'setSel([]); setSelecting(false); }, [section.id]);'
+          )
+
+          new_effect = """  useEffect(() => {
+              setTitle(section.title);
+              setDesc(section.description);
+              setSel([]);
+              setSelecting(false);
+              setTag("all");
+            }, [section.id]);"""
+
+          if new_effect not in source:
+              if source.count(old_effect) != 1:
+                  raise SystemExit("Could not safely update section-switch reset.")
+              source = source.replace(old_effect, new_effect, 1)
+
+          path.write_text(source)
+
+          # Add regression tests.
+          path = Path("src/test/ov-core.test.ts")
+          tests = path.read_text()
+
+          old_import = 'import { cloneCard, newCard, stitch, ungroup } from "@/lib/ov/cards";'
+          new_import = 'import { cardHasTag, cloneCard, collectCardTags, newCard, stitch, ungroup } from "@/lib/ov/cards";'
+
+          if new_import not in tests:
+              if tests.count(old_import) != 1:
+                  raise SystemExit("Could not safely update test imports.")
+              tests = tests.replace(old_import, new_import, 1)
+
+          block = """describe("recursive card tags", () => {
+            it("collects tags from stitched children without duplicates", () => {
+              const first = { ...newCard("richtext"), tags: ["Writing", "Shared"] };
+              const second = { ...checklist(), tags: ["Art", "shared"] };
+              const stitched = stitch([first, second], [first.id, second.id])[0]!;
+              const standalone = { ...newCard("link"), tags: ["Research"] };
+
+              const tags = collectCardTags([stitched, standalone]);
+
+              expect(tags).toHaveLength(4);
+              expect(tags).toContain("Writing");
+              expect(tags).toContain("Shared");
+              expect(tags).toContain("Art");
+              expect(tags).toContain("Research");
+            });
+
+            it("matches tags on nested children case-insensitively", () => {
+              const first = { ...newCard("richtext"), tags: ["Writing"] };
+              const second = { ...checklist(), tags: ["Art"] };
+              const stitched = stitch([first, second], [first.id, second.id])[0]!;
+
+              expect(cardHasTag(stitched, "writing")).toBe(true);
+              expect(cardHasTag(stitched, " ART ")).toBe(true);
+              expect(cardHasTag(stitched, "Research")).toBe(false);
+            });
+          });
+
+          """
+
+          anchor = 'describe("url safety", () => {'
+
+          if 'describe("recursive card tags", () =>' not in tests:
+              if anchor not in tests:
+                  raise SystemExit("Could not find test insertion point.")
+              tests = tests.replace(anchor, block + anchor, 1)
+
+          path.write_text(tests)
+          print("UX implementation completed.")
+          PY
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Run tests
+        run: bun run test
+
+      - name: Run lint
+        run: bun run lint
+
+      - name: Build application
+        run: bun run build
+
+      - name: Commit implementation
+        run: |
+          git add src/components/ov/SectionView.tsx src/test/ov-core.test.ts
+
+          if git diff --cached --quiet; then
+            echo "No new changes to commit."
+            exit 1
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git commit -m "Fix OmniVault stitched card tag filtering"
+          git push origin HEAD:pr/recent-logo-secret-vault-update
