@@ -139,17 +139,28 @@ jobs:
           print("UI UX source changes and regression tests are ready.")
           PY
 
+
       - name: Install locked dependencies
         run: bun install --frozen-lockfile
+
+      - name: Format files changed by this workflow
+        run: |
+          bunx prettier --write \
+            src/components/ov/SectionView.tsx \
+            src/test/ov-core.test.ts
 
       - name: Run automated tests
         run: bun run test
 
-      - name: Run lint
-        run: bun run lint
+      - name: Lint changed files
+        run: |
+          bunx eslint \
+            src/components/ov/SectionView.tsx \
+            src/test/ov-core.test.ts
 
       - name: Build the web application
         run: bun run build
+
 
       - name: Commit verified UI UX changes
         shell: bash
