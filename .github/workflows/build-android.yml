@@ -1,0 +1,102 @@
+
+name: Build OmniVault Android APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_branch:
+        description: "Branch containing the OmniVault app to build"
+        required: true
+        type: string
+        default: "pr/recent-logo-secret-vault-update"
+
+permissions:
+  contents: read
+
+jobs:
+  build-android:
+    name: Test and build Android APK
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+
+    env:
+      CARGO_TERM_COLOR: always
+      RUST_BACKTRACE: 1
+
+    steps:
+      - name: Check out selected app branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.target_branch }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.2.22
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+
+      - name: Install Android SDK and NDK
+        shell: bash
+        run: |
+          sdkmanager --install \
+            "platforms;android-35" \
+            "build-tools;35.0.0" \
+            "ndk;27.2.12479018"
+
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-$HOME/.android/sdk}}"
+
+          echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
+          echo "NDK_HOME=$SDK_ROOT/ndk/27.2.12479018" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=$SDK_ROOT/ndk/27.2.12479018" >> "$GITHUB_ENV"
+
+      - name: Set up Rust Android target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - name: Install project dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Run automated tests
+        run: bun run test
+
+      - name: Initialize Tauri Android project
+        run: bun run tauri android init --ci --skip-targets-install
+
+      - name: Build ARM64 debug APK
+        run: bun run tauri android build --ci --debug --apk --target aarch64
+
+      - name: Verify APK exists
+        shell: bash
+        run: |
+          APK=$(find src-tauri/gen/android/app/build/outputs/apk \
+            -type f -name "*.apk" -print -quit)
+
+          if [ -z "$APK" ]; then
+            echo "Android build completed without producing an APK."
+            exit 1
+          fi
+
+          echo "Generated APK: $APK"
+
+      - name: Upload Android APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: omnivault-android-arm64-debug
+          path: src-tauri/gen/android/app/build/outputs/apk/**/*.apk
+          if-no-files-found: error
+          retention-days: 14
